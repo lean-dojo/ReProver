@@ -1,0 +1,23 @@
+channels:
+  - defaults
+  - conda-forge
+  - pytorch
+  - nvidia
+dependencies:
+  - python=3.9
+  - ipython
+  - jupyter
+  - loguru
+  - tqdm
+  - black
+  - mypy
+  - pytorch-cuda=11.7
+  - pytorch
+  - faiss-cpu
+  - pip
+  - pip:
+    - deepspeed
+    - pytorch-lightning[extra]
+    - transformers
+    - datasets
+    - tensorboard
