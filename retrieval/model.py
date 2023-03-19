@@ -46,6 +46,8 @@ class PremiseRetriever(pl.LightningModule):
         else:
             self.doc_encoder = self.query_encoder
         # TODO: Try adding a linear project layer for dimensionality reduction.
+        # TODO: Retrieval and generation can share a model.
+        # TODO: Do we need re-ranking?
 
     def forward(
         self,
@@ -97,7 +99,7 @@ class PremiseRetriever(pl.LightningModule):
             batch["negative_docs_mask"],
             batch["label"],
         )
-        self.log("loss_train", loss, on_epoch=True, sync_dist=True)
+        self.log("loss_train", loss, on_epoch=True, sync_dist=True, batch_size=len(batch))
         return loss
 
     def on_train_start(self) -> None:
@@ -167,19 +169,20 @@ class PremiseRetriever(pl.LightningModule):
                 tb.add_text(f"doc_gt_{split}", doc_gt, n)
 
             k = len(docs)
-            for j in range(k):
+            for j in range(1, k+1):
                 if i == 0:
-                    tb.add_text(f"docs_{k}_{split}", docs[j], n)
+                    tb.add_text(f"docs_{j}_{split}", docs[j - 1], n)
+                # TODO: Only check the path and the name.
                 if doc_gt in docs[:j]:
-                    recall[j].append(1.0)
+                    recall[j - 1].append(1.0)
                 else:
-                    recall[j].append(0.0)
+                    recall[j - 1].append(0.0)
 
         recall = [100 * np.mean(_) for _ in recall]
-        for j in range(10):
+        for j in range(1, 11):
             self.log(
-                f"Recall@{j + 1}_{split}",
-                recall[j],
+                f"Recall@{j}_{split}",
+                recall[j - 1],
                 on_epoch=True,
                 sync_dist=True,
                 batch_size=batch_size,
@@ -200,11 +203,16 @@ class PremiseRetriever(pl.LightningModule):
             logger.info("Optimizing with AdamW")
             optimizer = torch.optim.AdamW(parameters, lr=self.lr)
 
-        max_steps = (
-            self.trainer.max_epochs
-            * len(self.trainer.datamodule.train_dataloader())
-            // self.trainer.accumulate_grad_batches
-        )
+        if self.trainer.max_steps != -1:
+            max_steps = self.trainer.max_steps
+        else:
+            assert self.trainer.max_epochs is not None
+            max_steps = (
+                self.trainer.max_epochs
+                * len(self.trainer.datamodule.train_dataloader())
+                // self.trainer.accumulate_grad_batches
+            )
+
         scheduler = get_cosine_schedule_with_warmup(
             optimizer,
             num_warmup_steps=self.warmup_steps,
