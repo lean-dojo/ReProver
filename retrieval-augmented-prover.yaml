@@ -13,7 +13,6 @@ dependencies:
   - mypy
   - pytorch-cuda=11.7
   - pytorch
-  - faiss-cpu
   - pip
   - pip:
     - deepspeed
