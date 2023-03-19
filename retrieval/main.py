@@ -1,8 +1,8 @@
 import os
 from loguru import logger
+from retrieval.model import PremiseRetriever
 from pytorch_lightning.cli import LightningCLI
 from retrieval.datamodule import RetrievalDataModule
-from retrieval.model import PremiseRetriever
 
 
 class CLI(LightningCLI):

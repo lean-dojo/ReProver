@@ -1,46 +1,236 @@
-import os
 import re
 import pdb
-import torch
 import json
+import torch
+import random
 import networkx as nx
-from loguru import logger
 from tqdm import tqdm
-import unicodedata
-from copy import deepcopy
 from pathlib import Path
-from torch.utils.data import Dataset, DataLoader
+from loguru import logger
+from lean_dojo import Pos
 import pytorch_lightning as pl
-from typing import Optional, List, Union
+from dataclasses import dataclass, field
+from contextlib import contextmanager
 from transformers import ByT5Tokenizer
-
-from retrieval.corpus import Corpus
-
-def _format_query(ex):
-    # TODO: Remove <a>
-    # TODO: Can also include the partial proof?
-    # TODO: Do file names and theorem names actually help?
-    return f"$FILE$ = {ex['file']} $THEOREM$ = {ex['theorem']} $TACTIC$ = {ex['tactic_prefix']} $STATE$ = {ex['state']}"
+from torch.utils.data import Dataset, DataLoader
+from transformers.tokenization_utils import BatchEncoding
+from typing import Optional, List, Union, Dict, Any, Tuple
 
 
-def _format_doc(d):
-    return f"$FILE$ = {d['file']} $NAME$ = {d['full_name']} $CODE$ = {d['code']}"
+@dataclass(frozen=True)
+class Premise:
+    """Premises are "documents" in our retrieval setup."""
+
+    path: Path
+    """The ``*.lean`` file this premise comes from.
+    """
+
+    full_name: str
+    """Fully qualified name.
+    """
+
+    code: str = field(compare=False)
+    """Raw, human-written code for defining the premise.
+    """
+
+    start: Pos = field(repr=False, compare=False)
+    """Start position of the premise's definition in the ``*.lean`` file.
+    """
+
+    end: Pos = field(repr=False, compare=False)
+    """End position of the premise's definition in the ``*.lean`` file.
+    """
+
+    def serialize(self) -> str:
+        """Serialize the premise into a string for Transformers."""
+        return f"$FILE$ = {self.path} $NAME$ = {self.full_name} $CODE$ = {self.code}"
 
 
-def _lt(x: List[int], y: List[int]) -> bool:
-    x_line, x_col = x
-    y_line, y_col = y
-    return x_line < y_line or (x_line == y_line and x_col < y_col)
+@dataclass(frozen=True)
+class File:
+    """A file defines 0 or multiple premises."""
+
+    path: Path
+    """Path of the ``*.lean`` file.
+    """
+
+    premises: List[Premise]
+    """A list of premises defined in this file.
+    """
+
+    @classmethod
+    def from_data(cls, file_data: Dict[str, Any]) -> "File":
+        """Construct a :class:`File` object from ``file_data``."""
+        path = Path(file_data["path"])
+        premises = [
+            Premise(path, p["full_name"], p["code"], Pos(*p["start"]), Pos(*p["end"]))
+            for p in file_data["premises"]
+            if not p["full_name"].startswith("user__.")
+        ]
+        return cls(path, premises)
+
+    @property
+    def is_empty(self) -> bool:
+        """Check whether the file contains no premise."""
+        return self.premises == []
 
 
-def _le(x: List[int], y: List[int]) -> bool:
-    x_line, x_col = x
-    y_line, y_col = y
-    return x_line < y_line or (x_line == y_line and x_col <= y_col)
+class Corpus:
+    """Our retrieval corpus is a DAG of files. Each file consists of
+    premises (theorems, definitoins, etc.) that can be retrieved.
+    """
+
+    dep_graph: nx.DiGraph
+    """Dependency graph among files. There is an edge from file X to Y iff X import Y.
+    """
+
+    all_premises: List[Premise]
+    """All premises in the entire corpus.
+    """
+
+    premise_embeddings: Optional[torch.Tensor] = None
+    """Vector embeddings of all premises produced by some machine learning model.
+    """
+
+    def __init__(self, jsonl_path: Union[str, Path]) -> None:
+        """Construct a :class:`Corpus` object from a ``corpus.jsonl`` data file."""
+        if isinstance(jsonl_path, str):
+            jsonl_path = Path(jsonl_path)
+
+        self.dep_graph = nx.DiGraph()
+        self.all_premises = []
+
+        logger.info(f"Building the corpus from {jsonl_path}")
+        lines = list(jsonl_path.open())
+
+        for line in tqdm(lines):
+            file_data = json.loads(line)
+            path = Path(file_data["path"])
+            assert not self.dep_graph.has_node(path)
+            file = File.from_data(file_data)
+
+            self.dep_graph.add_node(path, file=file)
+            self.all_premises.extend(file.premises)
+
+            for p in file_data["imports"]:
+                p = Path(p)
+                assert self.dep_graph.has_node(p)
+                self.dep_graph.add_edge(path, p)
+
+            assert nx.is_directed_acyclic_graph(self.dep_graph)
+
+    def get_premises(self, path: Union[str, Path]) -> List[Premise]:
+        """Return a list of premises defined in the file ``path``."""
+        if isinstance(path, str):
+            path = Path(path)
+        return self.dep_graph.nodes[path]["file"].premises
+
+    def num_premises(self, path: Union[str, Path]) -> int:
+        """Return the number of premises defined in the file ``path``."""
+        return len(self.get_premises(path))
+
+    def locate_premise(self, path: Union[str, Path], pos: Pos) -> Optional[Premise]:
+        """Return a premise at position ``pos`` in file ``path``.
+
+        Return None if no such premise can be found.
+        """
+        if isinstance(path, str):
+            path = Path(path)
+
+        for p in self.get_premises(path):
+            assert p.path == path
+            if p.start <= pos <= p.end:
+                return p
+
+        return None
+
+    def get_accessible_premises(
+        self, path: Union[str, Path], pos: Pos
+    ) -> List[Premise]:
+        """Return a list of premises accessible at position ``pos`` in file ``path``,
+        i.e., all premises defined in the (transitively) imported files or earlier in the same file.
+        """
+        if isinstance(path, str):
+            path = Path(path)
+        prems = [p for p in self.get_premises(path) if p.end < pos]
+        for p in nx.descendants(self.dep_graph, path):
+            file = self.get_file(p)
+            prems.extend(file.premises)
+        return prems
+
+    def get_nearest_premises(
+        self,
+        batch_path: List[Union[str, Path]],
+        batch_pos: List[Pos],
+        batch_context_emb: torch.Tensor,
+        k: int,
+    ) -> Tuple[List[List[str]], List[List[float]]]:
+        """Perform a batch of nearest neighbour search.
+
+        Args:
+            batch_path (List[Union[str, Path]]): _description_
+            batch_pos (List[Pos]): _description_
+            batch_context_emb (torch.Tensor): _description_
+            k (int): _description_
+
+        Returns:
+            Tuple[List[List[str]], List[List[float]]]: _description_
+        """
+        assert self.premise_embeddings is not None
+        similarities = batch_context_emb @ self.premise_embeddings.t()
+        idxs_batch = similarities.argsort(dim=1, descending=True)
+        assert len(batch_path) == len(batch_pos) == len(idxs_batch)
+        results = [[] for _ in batch_path]
+        scores = [[] for _ in batch_path]
+
+        for j, (path, pos, idxs) in enumerate(zip(batch_path, batch_pos, idxs_batch)):
+            accessible_premises = self.get_accessible_premises(path, pos)
+            for i in idxs:
+                if len(results[j]) >= k:
+                    break
+                p = self.all_premises[i]
+                if p in accessible_premises:
+                    results[j].append(p.serialize())
+                    scores[j].append(similarities[j, i].item())
+
+        return results, scores
+
+    def get_file(self, path: Union[str, Path]) -> File:
+        if isinstance(path, str):
+            path = Path(path)
+        return self.dep_graph.nodes[path]["file"]
+
+    @property
+    def files(self) -> List[File]:
+        return [self.dep_graph.nodes[p]["file"] for p in self.dep_graph.nodes]
+
+    def update_embeddings(self, encoder) -> None:
+        self.premise_embeddings = encoder(self.all_premises)
+
+    @contextmanager
+    def on_device(self, device):
+        old_device = self.premise_embeddings.device
+        self.premise_embeddings = self.premise_embeddings.to(device)
+        try:
+            yield
+        finally:
+            self.premise_embeddings = self.premise_embeddings.to(old_device)
 
 
-def _between(x: List[int], y: List[int], z: List[int]) -> bool:
-    return _le(x, y) and _le(y, z)
+@dataclass(frozen=True)
+class Context:
+    path: Path
+    theorem_full_name: str
+    theorem_pos: Pos
+    tactic_prefix: str
+    state: str
+
+    def serialize(self) -> str:
+        """Serialize the context into a string for Transformers."""
+        # TODO: Remove <a>
+        # TODO: Can also include the partial proof?
+        # TODO: Do file names and theorem names actually help?
+        return f"$FILE$ = {self.path} $THEOREM$ = {self.theorem_full_name} $TACTIC$ = {self.tactic_prefix} $STATE$ = {self.state}"
 
 
 class RetrievalDataset(Dataset):  # type: ignore
@@ -49,85 +239,97 @@ class RetrievalDataset(Dataset):  # type: ignore
         data_path: Path,
         corpus: Corpus,
         num_negatives: int,
-        model_name: str,
         max_seq_len: int,
+        tokenizer: str,
         is_train: bool,
     ) -> None:
         super().__init__()
         self.corpus = corpus
         self.num_negatives = num_negatives
         self.max_seq_len = max_seq_len
+        self.tokenizer = tokenizer
         self.is_train = is_train
-
-        self.tokenizer = ByT5Tokenizer.from_pretrained(model_name)
 
         self.data = []
         num_discarded = 0
         logger.info(f"Loading data from {data_path}")
 
-        for thm in json.load(data_path.open()):
+        for thm in tqdm(json.load(data_path.open())):
             repo_name = thm["url"].split("/")[-1]
-            file_path = os.path.join(repo_name, thm["file_path"])
+            file_path = Path(repo_name) / thm["file_path"]
             deps = nx.descendants(self.corpus.dep_graph, file_path)
 
             for tac in thm["traced_tactics"]:
                 annot_tac, provenances = tac["annotated_tactic"]
                 marks = list(re.finditer(r"(?<=<a>).+?(?=</a>)", annot_tac))
+
                 for m, prov in zip(marks, provenances):
-                    if prov["def_path"] != file_path and prov["def_path"] not in deps:
-                        pdb.set_trace()
-                    assert prov["def_path"] == file_path or prov["def_path"] in deps
-                    positive_doc = self.corpus.get_positive_premise(**prov)
-                    if positive_doc is None:
+                    def_path = Path(prov["def_path"])
+                    assert def_path == file_path or def_path in deps
+                    pos_premise = self.corpus.locate_premise(
+                        def_path, Pos(*prov["def_pos"])
+                    )
+                    if pos_premise is None:
                         num_discarded += 1
                     else:
+                        tactic_prefix = annot_tac[: m.start()]
+                        context = Context(
+                            file_path,
+                            thm["full_name"],
+                            Pos(*thm["start"]),
+                            tactic_prefix,
+                            tac["state_before"],
+                        )
                         self.data.append(
                             {
-                                "file": file_path,
-                                "theorem": thm["full_name"],
-                                "pos": thm["start"],
-                                "state": tac["state_before"],
-                                "tactic_prefix": annot_tac[: m.start()],
+                                "context": context,
                                 "tactic_arg": m.group(),
-                                "positive_doc": positive_doc,
+                                "pos_premise": pos_premise,
                             }
                         )
 
         logger.info(
             f"{len(self.data)} examples remain after discarding {num_discarded} examples"
         )
+        assert num_discarded / len(self.data) < 0.01
 
     def __len__(self) -> int:
         return len(self.data)
 
     def __getitem__(self, idx: int):
-        ex = deepcopy(self.data[idx])
-        ex["query"] = _format_query(ex)
-        positive_doc = ex["positive_doc"]
-        ex["positive_doc"] = _format_doc(positive_doc)
+        ex = self.data[idx]
+        context = ex["context"]
+        pos_premise = ex["pos_premise"]
+        item = {
+            "path": context.path,
+            "pos": context.theorem_pos,
+            "context": context.serialize(),
+            "pos_premise": pos_premise.serialize(),
+        }
 
         if self.is_train:
-            negative_docs = self.corpus.sample_negative_premises(
-                self.num_negatives, ex["file"], ex["pos"]
+            premises = self.corpus.get_accessible_premises(
+                context.path, context.theorem_pos
             )
-            ex["negative_docs"] = [_format_doc(d) for d in negative_docs]
+            neg_premises = random.sample(premises, self.num_negatives)
+            item["neg_premises"] = [p.serialize() for p in neg_premises]
 
-        return ex
+        return item
 
     def collate(self, examples):
         batch = {}
 
-        q = [ex["query"] for ex in examples]
-        query = self.tokenizer(
-            q,
+        c = [ex["context"] for ex in examples]
+        context = self.tokenizer(
+            c,
             padding="longest",
             max_length=self.max_seq_len,
             truncation=True,
             return_tensors="pt",
         )
 
-        pd = [ex["positive_doc"] for ex in examples]
-        positive_doc = self.tokenizer(
+        pd = [ex["pos_premise"] for ex in examples]
+        pos_premise = self.tokenizer(
             pd,
             padding="longest",
             max_length=self.max_seq_len,
@@ -135,16 +337,16 @@ class RetrievalDataset(Dataset):  # type: ignore
             return_tensors="pt",
         )
 
-        batch["query"] = q
-        batch["query_ids"] = query.input_ids
-        batch["query_mask"] = query.attention_mask
-        batch["positive_doc"] = pd
-        batch["positive_doc_ids"] = positive_doc.input_ids
-        batch["positive_doc_mask"] = positive_doc.attention_mask
+        batch["context"] = c
+        batch["context_ids"] = context.input_ids
+        batch["context_mask"] = context.attention_mask
+        batch["pos_premise"] = pd
+        batch["pos_premise_ids"] = pos_premise.input_ids
+        batch["pos_premise_mask"] = pos_premise.attention_mask
 
         if self.is_train:
-            batch["negative_docs_ids"] = []
-            batch["negative_docs_mask"] = []
+            batch["neg_premises_ids"] = []
+            batch["neg_premises_mask"] = []
 
             batch_size = len(examples)
             label = torch.zeros(batch_size, batch_size * (1 + self.num_negatives))
@@ -153,20 +355,20 @@ class RetrievalDataset(Dataset):  # type: ignore
             # TODO: Check if one's negative is another's positive
 
             for i in range(self.num_negatives):
-                neg_doc = self.tokenizer(
-                    [ex["negative_docs"][i] for ex in examples],
+                neg_premise = self.tokenizer(
+                    [ex["neg_premises"][i] for ex in examples],
                     padding="longest",
                     max_length=self.max_seq_len,
                     truncation=True,
                     return_tensors="pt",
                 )
-                batch["negative_docs_ids"].append(neg_doc.input_ids)
-                batch["negative_docs_mask"].append(neg_doc.attention_mask)
+                batch["neg_premises_ids"].append(neg_premise.input_ids)
+                batch["neg_premises_mask"].append(neg_premise.attention_mask)
 
             batch["label"] = label
 
         for k in examples[0].keys():
-            if k not in ("query", "positive_doc", "negative_docs"):
+            if k not in ("context", "pos_premise", "neg_premises"):
                 batch[k] = [ex[k] for ex in examples]
 
         return batch
@@ -191,11 +393,11 @@ class RetrievalDataModule(pl.LightningDataModule):
 
         self.data_path = data_path
         self.num_negatives = num_negatives
-        self.model_name = model_name
         self.batch_size = batch_size
         self.max_seq_len = max_seq_len
         self.num_workers = num_workers
 
+        self.tokenizer = ByT5Tokenizer.from_pretrained(model_name)
         self.corpus = Corpus(corpus_path)
 
     def prepare_data(self) -> None:
@@ -207,8 +409,8 @@ class RetrievalDataModule(pl.LightningDataModule):
                 self.data_path / "train.json",
                 self.corpus,
                 self.num_negatives,
-                self.model_name,
                 self.max_seq_len,
+                self.tokenizer,
                 is_train=True,
             )
 
@@ -217,8 +419,8 @@ class RetrievalDataModule(pl.LightningDataModule):
                 self.data_path / "val.json",
                 self.corpus,
                 self.num_negatives,
-                self.model_name,
                 self.max_seq_len,
+                self.tokenizer,
                 is_train=False,
             )
 
@@ -227,8 +429,8 @@ class RetrievalDataModule(pl.LightningDataModule):
                 self.data_path / "test.json",
                 self.corpus,
                 self.num_negatives,
-                self.model_name,
                 self.max_seq_len,
+                self.tokenizer,
                 is_train=False,
             )
 
@@ -268,10 +470,10 @@ if __name__ == "__main__":
     dm = RetrievalDataModule(
         data_path="data/lean_bench/random/",
         corpus_path="data/lean_bench/corpus.jsonl",
-        num_negatives=10,
+        num_negatives=3,
         model_name="google/byt5-small",
-        batch_size=32,
-        max_seq_len=2048,
+        batch_size=8,
+        max_seq_len=1024,
         num_workers=8,
     )
     dm.prepare_data()
@@ -283,9 +485,9 @@ if __name__ == "__main__":
     ):
         if i == 0:
             print(data_batch)
-        # max_len = max(max_len, data_batch["positive_doc_ids"].size(1))
-        # print("pos: ", data_batch["positive_doc_ids"].size())
-        # for ids in data_batch["negative_docs_ids"]:
+        # max_len = max(max_len, data_batch["pos_premise_ids"].size(1))
+        # print("pos: ", data_batch["pos_premise_ids"].size())
+        # for ids in data_batch["negative_premises_ids"]:
         #    max_len = max(max_len, ids.size(1))
         #    print("neg:", ids.size())
 

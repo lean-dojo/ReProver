@@ -1,10 +1,12 @@
 import pdb
 import torch
 import numpy as np
-import faiss
+from tqdm import tqdm
 from loguru import logger
-import torch.nn.functional as F
 import pytorch_lightning as pl
+import torch.nn.functional as F
+from typing import List, Dict, Any
+from retrieval.datamodule import Premise
 from transformers import T5EncoderModel, ByT5Tokenizer
 from transformers import get_cosine_schedule_with_warmup
 from deepspeed.ops.adam import FusedAdam, DeepSpeedCPUAdam
@@ -14,67 +16,65 @@ from pytorch_lightning.strategies.deepspeed import DeepSpeedStrategy
 torch.set_float32_matmul_precision("medium")
 
 
-def _encode(encoder, input_ids, attention_mask):
-    hidden_states = encoder(
-        input_ids=input_ids,
-        attention_mask=attention_mask,
-        return_dict=True,
-    ).last_hidden_state
-    features = hidden_states.mean(dim=1)
-    return F.normalize(features, dim=1)
-
-
 class PremiseRetriever(pl.LightningModule):
     def __init__(
         self,
         model_name: str,
         lr: float,
         warmup_steps: int,
-        dual_encoder: bool,
+        num_retrieved: int,
         max_seq_len: int,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
         self.lr = lr
         self.warmup_steps = warmup_steps
+        self.num_retrieved = num_retrieved
         self.max_seq_len = max_seq_len
 
         self.tokenizer = ByT5Tokenizer.from_pretrained(model_name)
-        self.query_encoder = T5EncoderModel.from_pretrained(model_name)
-        if dual_encoder:
-            self.doc_encoder = T5EncoderModel.from_pretrained(model_name)
-        else:
-            self.doc_encoder = self.query_encoder
+        self.encoder = T5EncoderModel.from_pretrained(model_name)
         # TODO: Try adding a linear project layer for dimensionality reduction.
-        # TODO: Retrieval and generation can share a model.
+        # TODO: Retrieval and generation can share the backbone.
         # TODO: Do we need re-ranking?
+
+    def _encode(
+        self, input_ids: torch.Tensor, attention_mask: torch.Tensor
+    ) -> torch.Tensor:
+        """Encode a tokenized sequence represented by ``input_ids`` and ``attention_mask``
+        into a feature vector using ``encoder``.
+        """
+        hidden_states = self.encoder(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            return_dict=True,
+        ).last_hidden_state
+        features = hidden_states.mean(dim=1)
+        # Normalize the feature vector to have unit norm.
+        return F.normalize(features, dim=1)
 
     def forward(
         self,
-        query_ids,
-        query_mask,
-        positive_doc_ids,
-        positive_doc_mask,
-        negative_docs_ids,
-        negative_docs_mask,
-        label,
-    ):
-        query_emb = _encode(self.query_encoder, query_ids, query_mask)
-        doc_emb = _encode(self.doc_encoder, positive_doc_ids, positive_doc_mask)
-
-        assert len(negative_docs_ids) == len(negative_docs_mask)
-        negative_embs = [
-            _encode(self.doc_encoder, ids, mask)
-            for ids, mask in zip(negative_docs_ids, negative_docs_mask)
+        context_ids: torch.Tensor,
+        context_mask: torch.Tensor,
+        pos_premise_ids: torch.Tensor,
+        pos_premise_mask: torch.Tensor,
+        neg_premises_ids: torch.Tensor,
+        neg_premises_mask: torch.Tensor,
+        label: torch.Tensor,
+    ) -> torch.Tensor:
+        # Encode the query and positive/negative documents.
+        context_emb = self._encode(context_ids, context_mask)
+        pos_premise_emb = self._encode(pos_premise_ids, pos_premise_mask)
+        assert len(neg_premises_ids) == len(neg_premises_mask)
+        neg_premise_embs = [
+            self._encode(ids, mask)
+            for ids, mask in zip(neg_premises_ids, neg_premises_mask)
         ]
+        all_premise_embs = torch.cat([pos_premise_emb, *neg_premise_embs], dim=0)
 
-        all_doc_embs = torch.cat([doc_emb, *negative_embs], dim=0)
-
-        # query_emb = F.normalize(query_emb, dim=1)
-        # doc_emb = F.normalize(doc_emb, dim=1)
-        # batch_size = query_emb.size(0)
-
-        similarity = torch.mm(query_emb, all_doc_embs.t())
+        # Cosine similarities for unit-norm vectors are just inner products.
+        similarity = torch.mm(context_emb, all_premise_embs.t())
         assert -1 <= similarity.min() <= similarity.max() <= 1
 
         # Cosine similarity loss.
@@ -89,17 +89,19 @@ class PremiseRetriever(pl.LightningModule):
         loss = F.mse_loss(similarity, label)
         return loss
 
-    def training_step(self, batch, batch_idx: int) -> torch.Tensor:  # type: ignore
+    def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:  # type: ignore
         loss = self(
-            batch["query_ids"],
-            batch["query_mask"],
-            batch["positive_doc_ids"],
-            batch["positive_doc_mask"],
-            batch["negative_docs_ids"],
-            batch["negative_docs_mask"],
+            batch["context_ids"],
+            batch["context_mask"],
+            batch["pos_premise_ids"],
+            batch["pos_premise_mask"],
+            batch["neg_premises_ids"],
+            batch["neg_premises_mask"],
             batch["label"],
         )
-        self.log("loss_train", loss, on_epoch=True, sync_dist=True, batch_size=len(batch))
+        self.log(
+            "loss_train", loss, on_epoch=True, sync_dist=True, batch_size=len(batch)
+        )
         return loss
 
     def on_train_start(self) -> None:
@@ -115,80 +117,82 @@ class PremiseRetriever(pl.LightningModule):
         self.reindex_corpus()
 
     def reindex_corpus(self) -> None:
+        """Re-index the retrieval corpus using the up-to-date encoder."""
         logger.info("Re-indexing the retrieval corpus")
 
-        def embed(examples):
-            positive_doc = self.tokenizer(
-                examples["doc"],
-                padding="longest",
-                max_length=self.max_seq_len,
-                truncation=True,
-                return_tensors="pt",
-            ).to(self.device)
-            with torch.no_grad():
-                doc_emb = (
-                    _encode(
-                        self.doc_encoder,
-                        positive_doc.input_ids,
-                        positive_doc.attention_mask,
-                    )
-                    .cpu()
-                    .to(dtype=torch.float32)
-                    .numpy()
+        def corpus_encoder(all_premises: List[Premise]) -> torch.Tensor:
+            # OK to use larger batch size since it is less expensive than training the model.
+            batch_size = 4 * self.trainer.datamodule.batch_size
+            premise_embeddings = []
+
+            for i in tqdm(range(0, len(all_premises), batch_size)):
+                batch_premises = all_premises[i : i + batch_size]
+                tokenized_premises = self.tokenizer(
+                    [p.serialize() for p in batch_premises],
+                    padding="longest",
+                    max_length=self.max_seq_len,
+                    truncation=True,
+                    return_tensors="pt",
+                ).to(self.device)
+                emb = self._encode(
+                    tokenized_premises.input_ids, tokenized_premises.attention_mask
                 )
-            return {"doc_emb": doc_emb}
+                premise_embeddings.append(emb)
 
-        self.indexed_corpus = self.trainer.datamodule.corpus.all_premises.map(
-            embed, batched=True, batch_size=self.trainer.datamodule.batch_size
-        ).add_faiss_index(column="doc_emb", metric_type=faiss.METRIC_INNER_PRODUCT)
+            return torch.cat(premise_embeddings).cpu()
 
-    def validation_step(self, batch, batch_idx: int) -> None:
+        with torch.no_grad():
+            self.trainer.datamodule.corpus.update_embeddings(corpus_encoder)
+
+    def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> None:
         self.val_test_step("val", batch, batch_idx)
 
-    def test_step(self, batch, batch_idx: int) -> None:
+    def test_step(self, batch: Dict[str, Any], batch_idx: int) -> None:
         self.val_test_step("test", batch, batch_idx)
 
-    def val_test_step(self, split: str, batch, batch_idx: int) -> None:
-        # Perform retrieval.
-        query_emb = _encode(self.query_encoder, batch["query_ids"], batch["query_mask"])
-        query_emb = query_emb.cpu().to(dtype=torch.float32).numpy()
+    def val_test_step(self, split: str, batch: Dict[str, Any], batch_idx: int) -> None:
+        """Retrieve premises and calculate Recall@K evaluation metrics."""
+        # Retrieval.
+        corpus = self.trainer.datamodule.corpus
+        with corpus.on_device(self.device):
+            context_emb = self._encode(batch["context_ids"], batch["context_mask"])
+            retrieved_premises, _ = corpus.get_nearest_premises(
+                batch["path"], batch["pos"], context_emb, self.num_retrieved
+            )
 
-        # TODO: Try retrieving from only feasible premises.
-        _, results = self.indexed_corpus.get_nearest_examples_batch(
-            "doc_emb", query_emb, k=10
-        )
-
-        retrieved_docs = [r["doc"] for r in results]
-        recall = [[] for j in range(10)]
-        tb = self.logger.experiment
+        # Evaluation & logging.
         batch_size = len(batch)
+        recall = [[] for _ in range(self.num_retrieved)]
+        tb = self.logger.experiment
 
-        for i, (doc_gt, docs) in enumerate(zip(batch["positive_doc"], retrieved_docs)):
+        for i, (premise_gt, premises) in enumerate(
+            zip(batch["pos_premise"], retrieved_premises)
+        ):
             n = batch_size * batch_idx + i
             if i == 0:
-                tb.add_text(f"doc_gt_{split}", doc_gt, n)
+                tb.add_text(f"premise_gt_{split}", premise_gt, n)
 
-            k = len(docs)
-            for j in range(1, k+1):
+            for j in range(self.num_retrieved):
                 if i == 0:
-                    tb.add_text(f"docs_{j}_{split}", docs[j - 1], n)
+                    tb.add_text(f"premises_{j + 1}_{split}", premises[j], n)
                 # TODO: Only check the path and the name.
-                if doc_gt in docs[:j]:
-                    recall[j - 1].append(1.0)
+                if premise_gt in premises[: (j + 1)]:
+                    recall[j].append(1.0)
                 else:
-                    recall[j - 1].append(0.0)
+                    recall[j].append(0.0)
 
         recall = [100 * np.mean(_) for _ in recall]
-        for j in range(1, 11):
+        for j in range(self.num_retrieved):
             self.log(
-                f"Recall@{j}_{split}",
-                recall[j - 1],
+                f"Recall@{j+1}_{split}",
+                recall[j],
                 on_epoch=True,
                 sync_dist=True,
                 batch_size=batch_size,
             )
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> Dict[str, Any]:
+        """Configure an AdamW optimizer with cosine warmup learning rate schedule."""
         parameters = self.parameters()
         strategy = self.trainer.strategy
 
