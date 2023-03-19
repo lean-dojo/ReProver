@@ -22,7 +22,7 @@ python retrieval/main.py fit --config retrieval/confs/cli_default.yaml
 
 Some CLI flags that may be useful:
 * `--trainer.devices`: You can use multiple GPUs.
-* `--trainer.accumulate_grad_batches` and `--data.batch_size`: If you have smaller memory, use a small `batch_size` and a large `accumulate_grad_batches` to keep the same effective batch size.
+* `--trainer.accumulate_grad_batches` and `--data.batch_size`: If you have smaller memory, use a small `batch_size` and a large `accumulate_grad_batches` to keep the same effective batch size. Due to the use of in-batch negatives in [Dense Passage Retrieval](https://arxiv.org/abs/2004.04906), `accumulate_grad_batches == 4, batch_size == 8` is not technically equivalent with `accumulate_grad_batches == 8, batch_size == 4`. The effect in practice is unclear.
 
 
 Caveats:
