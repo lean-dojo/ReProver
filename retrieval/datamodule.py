@@ -43,7 +43,7 @@ class Premise:
 
     def serialize(self) -> str:
         """Serialize the premise into a string for Transformers."""
-        return f"$NAME$ = {self.full_name} $CODE$ = {self.code}"
+        return f"$FILE$ = {self.path} $NAME$ = {self.full_name} $CODE$ = {self.code}"
 
 
 @dataclass(frozen=True)
@@ -230,7 +230,7 @@ class Context:
         # TODO: Remove <a>
         # TODO: Can also include the partial proof?
         # TODO: Do file names and theorem names actually help?
-        return f"$THEOREM$ = {self.theorem_full_name} $TACTIC$ = {self.tactic_prefix} $STATE$ = {self.state}"
+        return f"$FILE$ = {self.path} $THEOREM$ = {self.theorem_full_name} $TACTIC$ = {self.tactic_prefix} $STATE$ = {self.state}"
 
 
 class RetrievalDataset(Dataset):  # type: ignore
