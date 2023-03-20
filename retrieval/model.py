@@ -112,9 +112,17 @@ class PremiseRetriever(pl.LightningModule):
 
     def on_validation_start(self) -> None:
         self.reindex_corpus()
+        self.trainer.datamodule.corpus.to(self.device)
 
     def on_test_start(self) -> None:
         self.reindex_corpus()
+        self.trainer.datamodule.corpus.to(self.device)
+
+    def on_validation_end(self) -> None:
+        self.trainer.datamodule.corpus.cpu()
+
+    def on_test_end(self) -> None:
+        self.trainer.datamodule.corpus.cpu()
 
     def reindex_corpus(self) -> None:
         """Re-index the retrieval corpus using the up-to-date encoder."""
@@ -122,7 +130,7 @@ class PremiseRetriever(pl.LightningModule):
 
         def corpus_encoder(all_premises: List[Premise]) -> torch.Tensor:
             # OK to use larger batch size since it is less expensive than training the model.
-            batch_size = 4 * self.trainer.datamodule.batch_size
+            batch_size = 8 * self.trainer.datamodule.batch_size
             premise_embeddings = []
 
             for i in tqdm(range(0, len(all_premises), batch_size)):
@@ -154,11 +162,10 @@ class PremiseRetriever(pl.LightningModule):
         """Retrieve premises and calculate Recall@K evaluation metrics."""
         # Retrieval.
         corpus = self.trainer.datamodule.corpus
-        with corpus.on_device(self.device):
-            context_emb = self._encode(batch["context_ids"], batch["context_mask"])
-            retrieved_premises, _ = corpus.get_nearest_premises(
-                batch["path"], batch["pos"], context_emb, self.num_retrieved
-            )
+        context_emb = self._encode(batch["context_ids"], batch["context_mask"])
+        retrieved_premises, _ = corpus.get_nearest_premises(
+            batch["path"], batch["pos"], context_emb, self.num_retrieved
+        )
 
         # Evaluation & logging.
         batch_size = len(batch)

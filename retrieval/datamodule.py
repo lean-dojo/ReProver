@@ -10,11 +10,9 @@ from loguru import logger
 from lean_dojo import Pos
 import pytorch_lightning as pl
 from dataclasses import dataclass, field
-from contextlib import contextmanager
 from transformers import ByT5Tokenizer
 from torch.utils.data import Dataset, DataLoader
-from transformers.tokenization_utils import BatchEncoding
-from typing import Optional, List, Union, Dict, Any, Tuple
+from typing import Optional, List, Union, Dict, Any, Tuple, Generator
 
 
 @dataclass(frozen=True)
@@ -80,8 +78,9 @@ class Corpus:
     premises (theorems, definitoins, etc.) that can be retrieved.
     """
 
-    dep_graph: nx.DiGraph
-    """Dependency graph among files. There is an edge from file X to Y iff X import Y.
+    transitive_dep_graph: nx.DiGraph
+    """Transitive closure of the dependency graph among files. 
+    There is an edge from file X to Y iff X import Y (directly or indirectly).
     """
 
     all_premises: List[Premise]
@@ -97,7 +96,7 @@ class Corpus:
         if isinstance(jsonl_path, str):
             jsonl_path = Path(jsonl_path)
 
-        self.dep_graph = nx.DiGraph()
+        dep_graph = nx.DiGraph()
         self.all_premises = []
 
         logger.info(f"Building the corpus from {jsonl_path}")
@@ -106,24 +105,38 @@ class Corpus:
         for line in tqdm(lines):
             file_data = json.loads(line)
             path = Path(file_data["path"])
-            assert not self.dep_graph.has_node(path)
+            assert not dep_graph.has_node(path)
             file = File.from_data(file_data)
 
-            self.dep_graph.add_node(path, file=file)
+            dep_graph.add_node(path, file=file)
             self.all_premises.extend(file.premises)
 
             for p in file_data["imports"]:
                 p = Path(p)
-                assert self.dep_graph.has_node(p)
-                self.dep_graph.add_edge(path, p)
+                assert dep_graph.has_node(p)
+                dep_graph.add_edge(path, p)
 
-            assert nx.is_directed_acyclic_graph(self.dep_graph)
+        assert nx.is_directed_acyclic_graph(dep_graph)
+        self.transitive_dep_graph = nx.transitive_closure_dag(dep_graph)
+
+    def _get_file(self, path: Path) -> File:
+        return self.transitive_dep_graph.nodes[path]["file"]
+
+    @property
+    def files(self) -> List[File]:
+        return [self._get_file(p) for p in self.transitive_dep_graph.dep_graph.nodes]
+
+    def get_dependencies(self, path: Union[str, Path]) -> List[Path]:
+        """Return a list of (direct and indirect) dependencies of the file ``path``."""
+        if isinstance(path, str):
+            path = Path(path)
+        return list(self.transitive_dep_graph.successors(path))
 
     def get_premises(self, path: Union[str, Path]) -> List[Premise]:
         """Return a list of premises defined in the file ``path``."""
         if isinstance(path, str):
             path = Path(path)
-        return self.dep_graph.nodes[path]["file"].premises
+        return self._get_file(path).premises
 
     def num_premises(self, path: Union[str, Path]) -> int:
         """Return the number of premises defined in the file ``path``."""
@@ -144,19 +157,31 @@ class Corpus:
 
         return None
 
-    def get_accessible_premises(
+    def iter_accessible_premises(
         self, path: Union[str, Path], pos: Pos
-    ) -> List[Premise]:
-        """Return a list of premises accessible at position ``pos`` in file ``path``,
+    ) -> Generator[Premise, None, None]:
+        """Return an iterator of premises accessible at position ``pos`` in file ``path``,
         i.e., all premises defined in the (transitively) imported files or earlier in the same file.
         """
         if isinstance(path, str):
             path = Path(path)
-        prems = [p for p in self.get_premises(path) if p.end < pos]
-        for p in nx.descendants(self.dep_graph, path):
-            file = self.get_file(p)
-            prems.extend(file.premises)
-        return prems
+        for p in self.get_premises(path):
+            if p.end < pos:
+                yield p
+        for p in self.transitive_dep_graph.successors(path):
+            yield from self._get_file(p).premises
+
+    def get_accessible_premise_indexes(
+        self, path: Union[str, Path], pos: Pos
+    ) -> List[int]:
+        if isinstance(path, str):
+            path = Path(path)
+        return {
+            i
+            for i, prem in enumerate(self.all_premises)
+            if (prem.path == path and prem.end < pos)
+            or self.transitive_dep_graph.has_edge(path, prem.path)
+        }
 
     def get_nearest_premises(
         self,
@@ -184,37 +209,28 @@ class Corpus:
         scores = [[] for _ in batch_path]
 
         for j, (path, pos, idxs) in enumerate(zip(batch_path, batch_pos, idxs_batch)):
-            accessible_premises = self.get_accessible_premises(path, pos)
+            accessible_premises = set(self.iter_accessible_premises(path, pos))
+            assert len(accessible_premises) >= k
             for i in idxs:
-                if len(results[j]) >= k:
-                    break
                 p = self.all_premises[i]
                 if p in accessible_premises:
                     results[j].append(p.serialize())
                     scores[j].append(similarities[j, i].item())
+                    if len(results[j]) >= k:
+                        break
+            else:
+                raise ValueError
 
         return results, scores
-
-    def get_file(self, path: Union[str, Path]) -> File:
-        if isinstance(path, str):
-            path = Path(path)
-        return self.dep_graph.nodes[path]["file"]
-
-    @property
-    def files(self) -> List[File]:
-        return [self.dep_graph.nodes[p]["file"] for p in self.dep_graph.nodes]
 
     def update_embeddings(self, encoder) -> None:
         self.premise_embeddings = encoder(self.all_premises)
 
-    @contextmanager
-    def on_device(self, device):
-        old_device = self.premise_embeddings.device
+    def to(self, device):
         self.premise_embeddings = self.premise_embeddings.to(device)
-        try:
-            yield
-        finally:
-            self.premise_embeddings = self.premise_embeddings.to(old_device)
+
+    def cpu(self):
+        self.premise_embeddings = self.premise_embeddings.cpu()
 
 
 @dataclass(frozen=True)
@@ -257,7 +273,7 @@ class RetrievalDataset(Dataset):  # type: ignore
         for thm in tqdm(json.load(data_path.open())):
             repo_name = thm["url"].split("/")[-1]
             file_path = Path(repo_name) / thm["file_path"]
-            deps = nx.descendants(self.corpus.dep_graph, file_path)
+            deps = self.corpus.get_dependencies(file_path)
 
             for tac in thm["traced_tactics"]:
                 annot_tac, provenances = tac["annotated_tactic"]
@@ -308,8 +324,8 @@ class RetrievalDataset(Dataset):  # type: ignore
         }
 
         if self.is_train:
-            premises = self.corpus.get_accessible_premises(
-                context.path, context.theorem_pos
+            premises = list(
+                self.corpus.iter_accessible_premises(context.path, context.theorem_pos)
             )
             neg_premises = random.sample(premises, self.num_negatives)
             item["neg_premises"] = [p.serialize() for p in neg_premises]
