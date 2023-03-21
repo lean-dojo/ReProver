@@ -17,7 +17,7 @@ python retrieval/main.py fit --help
 
 The default training command uses [this config file](retrieval/confs/cli_default.yaml). It takes ~2 days on one A100 GPU of 80 GB memory. 
 ```bash
-python retrieval/main.py fit --config retrieval/confs/cli_default.yaml
+python -u retrieval/main.py fit --config retrieval/confs/cli_default.yaml
 ```
 
 Some CLI flags that may be useful:
