@@ -9,7 +9,6 @@ trainer:
   accumulate_grad_batches: 4
   check_val_every_n_epoch: 2
   callbacks:
-    - class_path: pytorch_lightning.callbacks.RichProgressBar
     - class_path: pytorch_lightning.callbacks.LearningRateMonitor
       init_args: 
         logging_interval: step

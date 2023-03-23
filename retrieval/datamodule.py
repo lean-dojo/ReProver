@@ -41,7 +41,14 @@ class Premise:
 
     def serialize(self) -> str:
         """Serialize the premise into a string for Transformers."""
-        return f"$FILE$ = {self.path} $NAME$ = {self.full_name} $CODE$ = {self.code}"
+        # Just some quick, ad-hoc code.
+        if (
+            self.code.startswith("theorem ") or self.code.startswith("lemma ")
+        ) and ":=" in self.code:
+            code = self.code[: self.code.index(":=")]
+        else:
+            code = self.code
+        return f"$FILE$ = {self.path} $NAME$ = {self.full_name} $CODE$ = {code}"
 
 
 @dataclass(frozen=True)
