@@ -49,7 +49,9 @@ class PremiseRetriever(pl.LightningModule):
             attention_mask=attention_mask,
             return_dict=True,
         ).last_hidden_state
-        features = hidden_states.mean(dim=1)
+        # Masked average.
+        lens = attention_mask.sum(dim=1)
+        features = (hidden_states * attention_mask.unsqueeze(2)).sum(dim=1) / lens.unsqueeze(1)
         # Normalize the feature vector to have unit norm.
         return F.normalize(features, dim=1)
 
