@@ -41,7 +41,7 @@ class Premise:
 
     def serialize(self) -> str:
         """Serialize the premise into a string for Transformers."""
-        return f"$FILE$ = {self.path} $NAME$ = {self.full_name} $CODE$ = {self.code}"
+        return f"$NAME$ = {self.full_name} $CODE$ = {self.code}"
 
 
 @dataclass(frozen=True)
@@ -244,7 +244,7 @@ class Context:
     def serialize(self) -> str:
         """Serialize the context into a string for Transformers."""
         # TODO: Do file names and theorem names actually help?
-        return f"$FILE$ = {self.path} $THEOREM$ = {self.theorem_full_name} $TACTIC$ = {self.tactic_prefix} $STATE$ = {self.state}"
+        return f"$THEOREM$ = {self.theorem_full_name} $TACTIC$ = {self.tactic_prefix} $STATE$ = {self.state}"
 
 
 class RetrievalDataset(Dataset):  # type: ignore
