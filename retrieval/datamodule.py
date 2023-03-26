@@ -63,7 +63,7 @@ class File:
         premises = [
             Premise(path, p["full_name"], p["code"], Pos(*p["start"]), Pos(*p["end"]))
             for p in file_data["premises"]
-            if not p["full_name"].startswith("user__.")
+            if "user__.n" not in p["full_name"]
         ]
         return cls(path, premises)
 
@@ -243,8 +243,6 @@ class Context:
 
     def serialize(self) -> str:
         """Serialize the context into a string for Transformers."""
-        # TODO: Remove <a>
-        # TODO: Can also include the partial proof?
         # TODO: Do file names and theorem names actually help?
         return f"$FILE$ = {self.path} $THEOREM$ = {self.theorem_full_name} $TACTIC$ = {self.tactic_prefix} $STATE$ = {self.state}"
 
@@ -324,9 +322,13 @@ class RetrievalDataset(Dataset):  # type: ignore
         }
 
         if self.is_train:
-            premises = list(
-                self.corpus.iter_accessible_premises(context.path, context.theorem_pos)
-            )
+            premises = [
+                p
+                for p in self.corpus.iter_accessible_premises(
+                    context.path, context.theorem_pos
+                )
+                if p != pos_premise
+            ]
             neg_premises = random.sample(premises, self.num_negatives)
             item["neg_premises"] = [p.serialize() for p in neg_premises]
 
@@ -366,9 +368,19 @@ class RetrievalDataset(Dataset):  # type: ignore
 
             batch_size = len(examples)
             label = torch.zeros(batch_size, batch_size * (1 + self.num_negatives))
+            # Check if one's negative is another's positive
             for j in range(batch_size):
-                label[j, j] = 1.0
-            # TODO: Check if one's negative is another's positive
+                pos_premise = examples[j]["pos_premise"]
+                for k in range(batch_size * (1 + self.num_negatives)):
+                    if k < batch_size:
+                        label[j, k] = float(pos_premise == examples[k]["pos_premise"])
+                    else:
+                        label[j, k] = float(
+                            pos_premise
+                            == examples[k % batch_size]["neg_premises"][
+                                k // batch_size - 1
+                            ]
+                        )
 
             for i in range(self.num_negatives):
                 neg_premise = self.tokenizer(
