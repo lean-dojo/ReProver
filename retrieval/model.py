@@ -51,7 +51,9 @@ class PremiseRetriever(pl.LightningModule):
         ).last_hidden_state
         # Masked average.
         lens = attention_mask.sum(dim=1)
-        features = (hidden_states * attention_mask.unsqueeze(2)).sum(dim=1) / lens.unsqueeze(1)
+        features = (hidden_states * attention_mask.unsqueeze(2)).sum(
+            dim=1
+        ) / lens.unsqueeze(1)
         # Normalize the feature vector to have unit norm.
         return F.normalize(features, dim=1)
 
@@ -132,7 +134,7 @@ class PremiseRetriever(pl.LightningModule):
 
         def corpus_encoder(all_premises: List[Premise]) -> torch.Tensor:
             # OK to use larger batch size since it is less expensive than training the model.
-            batch_size = 8 * self.trainer.datamodule.batch_size
+            batch_size = 16 * self.trainer.datamodule.batch_size
             premise_embeddings = []
 
             for i in tqdm(range(0, len(all_premises), batch_size)):
@@ -166,7 +168,7 @@ class PremiseRetriever(pl.LightningModule):
         corpus = self.trainer.datamodule.corpus
         context_emb = self._encode(batch["context_ids"], batch["context_mask"])
         retrieved_premises, _ = corpus.get_nearest_premises(
-            batch["path"], batch["pos"], context_emb, self.num_retrieved
+            batch["context"], context_emb, self.num_retrieved
         )
 
         # Evaluation & logging.
@@ -179,12 +181,11 @@ class PremiseRetriever(pl.LightningModule):
         ):
             n = batch_size * batch_idx + i
             if i == 0:
-                tb.add_text(f"premise_gt_{split}", premise_gt, n)
+                tb.add_text(f"premise_gt_{split}", str(premise_gt), n)
 
             for j in range(self.num_retrieved):
                 if i == 0:
-                    tb.add_text(f"premises_{j + 1}_{split}", premises[j], n)
-                # TODO: Only check the path and the name.
+                    tb.add_text(f"premises_{j + 1}_{split}", str(premises[j]), n)
                 if premise_gt in premises[: (j + 1)]:
                     recall[j].append(1.0)
                 else:

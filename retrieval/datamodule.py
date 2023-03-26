@@ -3,6 +3,7 @@ import pdb
 import json
 import torch
 import random
+from copy import copy
 import networkx as nx
 from tqdm import tqdm
 from pathlib import Path
@@ -15,7 +16,21 @@ from torch.utils.data import Dataset, DataLoader
 from typing import Optional, List, Union, Dict, Any, Tuple, Generator
 
 
-@dataclass(frozen=True)
+@dataclass
+class Context:
+    path: Path
+    theorem_full_name: str
+    theorem_pos: Pos
+    tactic_prefix: str
+    state: str
+
+    def serialize(self) -> str:
+        """Serialize the context into a string for Transformers."""
+        # TODO: Make sure the goal is not truncated.
+        return f"$TACTIC$ = {self.tactic_prefix} $STATE$ = {self.state}"
+
+
+@dataclass
 class Premise:
     """Premises are "documents" in our retrieval setup."""
 
@@ -27,11 +42,7 @@ class Premise:
     """Fully qualified name.
     """
 
-    code: str = field(compare=False)
-    """Raw, human-written code for defining the premise.
-    """
-
-    start: Pos = field(repr=False, compare=False)
+    start: Pos = field(repr=False)
     """Start position of the premise's definition in the ``*.lean`` file.
     """
 
@@ -39,9 +50,21 @@ class Premise:
     """End position of the premise's definition in the ``*.lean`` file.
     """
 
+    code: str = field(compare=False)
+    """Raw, human-written code for defining the premise.
+    """
+
     def serialize(self) -> str:
         """Serialize the premise into a string for Transformers."""
-        return f"$FILE$ = {self.path} $NAME$ = {self.full_name} $CODE$ = {self.code}"
+        return self.code
+
+    def __hash__(self) -> int:
+        return (
+            hash(self.path)
+            ^ hash(self.full_name)
+            ^ hash(self.start.line_nb)
+            ^ hash(self.start.column_nb)
+        )
 
 
 @dataclass(frozen=True)
@@ -61,9 +84,9 @@ class File:
         """Construct a :class:`File` object from ``file_data``."""
         path = Path(file_data["path"])
         premises = [
-            Premise(path, p["full_name"], p["code"], Pos(*p["start"]), Pos(*p["end"]))
+            Premise(path, p["full_name"], Pos(*p["start"]), Pos(*p["end"]), p["code"])
             for p in file_data["premises"]
-            if not p["full_name"].startswith("user__.")
+            if "user__.n" not in p["full_name"]
         ]
         return cls(path, premises)
 
@@ -185,11 +208,10 @@ class Corpus:
 
     def get_nearest_premises(
         self,
-        batch_path: List[Union[str, Path]],
-        batch_pos: List[Pos],
+        batch_context: List[Context],
         batch_context_emb: torch.Tensor,
         k: int,
-    ) -> Tuple[List[List[str]], List[List[float]]]:
+    ) -> Tuple[List[List[Premise]], List[List[float]]]:
         """Perform a batch of nearest neighbour search.
 
         Args:
@@ -204,17 +226,19 @@ class Corpus:
         assert self.premise_embeddings is not None
         similarities = batch_context_emb @ self.premise_embeddings.t()
         idxs_batch = similarities.argsort(dim=1, descending=True)
-        assert len(batch_path) == len(batch_pos) == len(idxs_batch)
-        results = [[] for _ in batch_path]
-        scores = [[] for _ in batch_path]
+        assert len(batch_context) == len(idxs_batch)
+        results = [[] for _ in batch_context]
+        scores = [[] for _ in batch_context]
 
-        for j, (path, pos, idxs) in enumerate(zip(batch_path, batch_pos, idxs_batch)):
-            accessible_premises = set(self.iter_accessible_premises(path, pos))
+        for j, (ctx, idxs) in enumerate(zip(batch_context, idxs_batch)):
+            accessible_premises = set(
+                self.iter_accessible_premises(ctx.path, ctx.theorem_pos)
+            )
             assert len(accessible_premises) >= k
             for i in idxs:
                 p = self.all_premises[i]
                 if p in accessible_premises:
-                    results[j].append(p.serialize())
+                    results[j].append(p)
                     scores[j].append(similarities[j, i].item())
                     if len(results[j]) >= k:
                         break
@@ -231,22 +255,6 @@ class Corpus:
 
     def cpu(self):
         self.premise_embeddings = self.premise_embeddings.cpu()
-
-
-@dataclass(frozen=True)
-class Context:
-    path: Path
-    theorem_full_name: str
-    theorem_pos: Pos
-    tactic_prefix: str
-    state: str
-
-    def serialize(self) -> str:
-        """Serialize the context into a string for Transformers."""
-        # TODO: Remove <a>
-        # TODO: Can also include the partial proof?
-        # TODO: Do file names and theorem names actually help?
-        return f"$FILE$ = {self.path} $THEOREM$ = {self.theorem_full_name} $TACTIC$ = {self.tactic_prefix} $STATE$ = {self.state}"
 
 
 class RetrievalDataset(Dataset):  # type: ignore
@@ -313,75 +321,84 @@ class RetrievalDataset(Dataset):  # type: ignore
         return len(self.data)
 
     def __getitem__(self, idx: int):
-        ex = self.data[idx]
-        context = ex["context"]
-        pos_premise = ex["pos_premise"]
-        item = {
-            "path": context.path,
-            "pos": context.theorem_pos,
-            "context": context.serialize(),
-            "pos_premise": pos_premise.serialize(),
-        }
+        ex = copy(self.data[idx])
 
         if self.is_train:
-            premises = list(
-                self.corpus.iter_accessible_premises(context.path, context.theorem_pos)
-            )
+            premises = [
+                p
+                for p in self.corpus.iter_accessible_premises(
+                    ex["context"].path, ex["context"].theorem_pos
+                )
+                if p != ex["pos_premise"]
+            ]
             neg_premises = random.sample(premises, self.num_negatives)
-            item["neg_premises"] = [p.serialize() for p in neg_premises]
+            ex["neg_premises"] = [p for p in neg_premises]
 
-        return item
+        return ex
 
     def collate(self, examples):
         batch = {}
 
-        c = [ex["context"] for ex in examples]
-        context = self.tokenizer(
-            c,
+        context = [ex["context"] for ex in examples]
+        tokenized_context = self.tokenizer(
+            [c.serialize() for c in context],
             padding="longest",
             max_length=self.max_seq_len,
             truncation=True,
             return_tensors="pt",
         )
 
-        pd = [ex["pos_premise"] for ex in examples]
-        pos_premise = self.tokenizer(
-            pd,
+        pos_premise = [ex["pos_premise"] for ex in examples]
+        tokenized_pos_premise = self.tokenizer(
+            [p.serialize() for p in pos_premise],
             padding="longest",
             max_length=self.max_seq_len,
             truncation=True,
             return_tensors="pt",
         )
 
-        batch["context"] = c
-        batch["context_ids"] = context.input_ids
-        batch["context_mask"] = context.attention_mask
-        batch["pos_premise"] = pd
-        batch["pos_premise_ids"] = pos_premise.input_ids
-        batch["pos_premise_mask"] = pos_premise.attention_mask
+        batch["context"] = context
+        batch["context_ids"] = tokenized_context.input_ids
+        batch["context_mask"] = tokenized_context.attention_mask
+        batch["pos_premise"] = pos_premise
+        batch["pos_premise_ids"] = tokenized_pos_premise.input_ids
+        batch["pos_premise_mask"] = tokenized_pos_premise.attention_mask
 
         if self.is_train:
+            batch_size = len(examples)
+            label = torch.zeros(batch_size, batch_size * (1 + self.num_negatives))
+
+            # Check if one's negative is another's positive
+            for j in range(batch_size):
+                pos_premise = examples[j]["pos_premise"]
+                for k in range(batch_size * (1 + self.num_negatives)):
+                    if k < batch_size:
+                        label[j, k] = float(pos_premise == examples[k]["pos_premise"])
+                    else:
+                        label[j, k] = float(
+                            pos_premise
+                            == examples[k % batch_size]["neg_premises"][
+                                k // batch_size - 1
+                            ]
+                        )
+
+            batch["label"] = label
+            batch["neg_premises"] = []
             batch["neg_premises_ids"] = []
             batch["neg_premises_mask"] = []
 
-            batch_size = len(examples)
-            label = torch.zeros(batch_size, batch_size * (1 + self.num_negatives))
-            for j in range(batch_size):
-                label[j, j] = 1.0
-            # TODO: Check if one's negative is another's positive
-
             for i in range(self.num_negatives):
-                neg_premise = self.tokenizer(
-                    [ex["neg_premises"][i] for ex in examples],
+                neg_premise = [ex["neg_premises"][i] for ex in examples]
+                tokenized_neg_premise = self.tokenizer(
+                    [p.serialize() for p in neg_premise],
                     padding="longest",
                     max_length=self.max_seq_len,
                     truncation=True,
                     return_tensors="pt",
                 )
-                batch["neg_premises_ids"].append(neg_premise.input_ids)
-                batch["neg_premises_mask"].append(neg_premise.attention_mask)
-
-            batch["label"] = label
+                batch["neg_premises"].append(neg_premise)
+                batch["neg_premises_ids"].append(tokenized_neg_premise.input_ids)
+                batch["neg_premises_mask"].append(tokenized_neg_premise.attention_mask)
 
         for k in examples[0].keys():
             if k not in ("context", "pos_premise", "neg_premises"):
@@ -502,8 +519,8 @@ if __name__ == "__main__":
         if i == 0:
             print(data_batch)
         # max_len = max(max_len, data_batch["pos_premise_ids"].size(1))
-        # print("pos: ", data_batch["pos_premise_ids"].size())
-        # for ids in data_batch["negative_premises_ids"]:
+        print("pos: ", data_batch["pos_premise_ids"].size())
+        # for ids in data_batch["neg_premises_ids"]:
         #    max_len = max(max_len, ids.size(1))
         #    print("neg:", ids.size())
 
