@@ -168,7 +168,7 @@ class PremiseRetriever(pl.LightningModule):
         corpus = self.trainer.datamodule.corpus
         context_emb = self._encode(batch["context_ids"], batch["context_mask"])
         retrieved_premises, _ = corpus.get_nearest_premises(
-            batch["path"], batch["pos"], context_emb, self.num_retrieved
+            batch["context"], context_emb, self.num_retrieved
         )
 
         # Evaluation & logging.
@@ -181,11 +181,11 @@ class PremiseRetriever(pl.LightningModule):
         ):
             n = batch_size * batch_idx + i
             if i == 0:
-                tb.add_text(f"premise_gt_{split}", premise_gt, n)
+                tb.add_text(f"premise_gt_{split}", str(premise_gt), n)
 
             for j in range(self.num_retrieved):
                 if i == 0:
-                    tb.add_text(f"premises_{j + 1}_{split}", premises[j], n)
+                    tb.add_text(f"premises_{j + 1}_{split}", str(premises[j]), n)
                 # TODO: Only check the path and the name.
                 if premise_gt in premises[: (j + 1)]:
                     recall[j].append(1.0)
