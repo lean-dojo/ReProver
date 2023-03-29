@@ -49,12 +49,15 @@ class PremiseRetriever(pl.LightningModule):
             attention_mask=attention_mask,
             return_dict=True,
         ).last_hidden_state
+        features = hidden_states[input_ids == self.tokenizer.eos_token_id]
+        """
         # Masked average.
         lens = attention_mask.sum(dim=1)
         features = (hidden_states * attention_mask.unsqueeze(2)).sum(
             dim=1
         ) / lens.unsqueeze(1)
         # Normalize the feature vector to have unit norm.
+        """
         return F.normalize(features, dim=1)
 
     def forward(
@@ -134,7 +137,7 @@ class PremiseRetriever(pl.LightningModule):
 
         def corpus_encoder(all_premises: List[Premise]) -> torch.Tensor:
             # OK to use larger batch size since it is less expensive than training the model.
-            batch_size = 8 * self.trainer.datamodule.batch_size
+            batch_size = 16 * self.trainer.datamodule.batch_size
             premise_embeddings = []
 
             for i in tqdm(range(0, len(all_premises), batch_size)):
@@ -186,7 +189,6 @@ class PremiseRetriever(pl.LightningModule):
             for j in range(self.num_retrieved):
                 if i == 0:
                     tb.add_text(f"premises_{j + 1}_{split}", str(premises[j]), n)
-                # TODO: Only check the path and the name.
                 if premise_gt in premises[: (j + 1)]:
                     recall[j].append(1.0)
                 else:

@@ -38,5 +38,5 @@ data:
   corpus_path: data/lean_bench/corpus.jsonl
   num_negatives: 3
   batch_size: 8  # effective_batch_size == batch_size * accumulate_grad_batches * devices
-  max_seq_len: 1024  # A little bit too small.
+  max_seq_len: 1024
   num_workers: 8

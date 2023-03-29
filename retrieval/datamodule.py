@@ -27,7 +27,6 @@ class Context:
     def serialize(self) -> str:
         """Serialize the context into a string for Transformers."""
         # TODO: Make sure the goal is not truncated.
-        # TODO: Put the prefix at the end of the context.
         return f"$TACTIC$ = {self.tactic_prefix} $STATE$ = {self.state}"
 
 
@@ -50,7 +49,7 @@ class Premise:
     end: Pos = field(repr=False, compare=False)
     """End position of the premise's definition in the ``*.lean`` file.
     """
-    
+
     code: str = field(compare=False)
     """Raw, human-written code for defining the premise.
     """
@@ -60,8 +59,13 @@ class Premise:
         return self.code
 
     def __hash__(self) -> int:
-        return hash(self.path) ^ hash(self.full_name) ^ hash(self.start.line_nb) ^ hash(self.start.column_nb)
-        
+        return (
+            hash(self.path)
+            ^ hash(self.full_name)
+            ^ hash(self.start.line_nb)
+            ^ hash(self.start.column_nb)
+        )
+
 
 @dataclass(frozen=True)
 class File:
@@ -227,7 +231,9 @@ class Corpus:
         scores = [[] for _ in batch_context]
 
         for j, (ctx, idxs) in enumerate(zip(batch_context, idxs_batch)):
-            accessible_premises = set(self.iter_accessible_premises(ctx.path, ctx.theorem_pos))
+            accessible_premises = set(
+                self.iter_accessible_premises(ctx.path, ctx.theorem_pos)
+            )
             assert len(accessible_premises) >= k
             for i in idxs:
                 p = self.all_premises[i]
@@ -361,8 +367,8 @@ class RetrievalDataset(Dataset):  # type: ignore
         if self.is_train:
             batch_size = len(examples)
             label = torch.zeros(batch_size, batch_size * (1 + self.num_negatives))
-            
-             # Check if one's negative is another's positive
+
+            # Check if one's negative is another's positive
             for j in range(batch_size):
                 pos_premise = examples[j]["pos_premise"]
                 for k in range(batch_size * (1 + self.num_negatives)):
@@ -375,7 +381,7 @@ class RetrievalDataset(Dataset):  # type: ignore
                                 k // batch_size - 1
                             ]
                         )
-                        
+
             batch["label"] = label
             batch["neg_premises"] = []
             batch["neg_premises_ids"] = []
@@ -392,7 +398,7 @@ class RetrievalDataset(Dataset):  # type: ignore
                 )
                 batch["neg_premises"].append(neg_premise)
                 batch["neg_premises_ids"].append(tokenized_neg_premise.input_ids)
-                batch["neg_premises_mask"].append(tokenized_neg_premise.attention_mask)   
+                batch["neg_premises_mask"].append(tokenized_neg_premise.attention_mask)
 
         for k in examples[0].keys():
             if k not in ("context", "pos_premise", "neg_premises"):
@@ -513,8 +519,8 @@ if __name__ == "__main__":
         if i == 0:
             print(data_batch)
         # max_len = max(max_len, data_batch["pos_premise_ids"].size(1))
-        # print("pos: ", data_batch["pos_premise_ids"].size())
-        # for ids in data_batch["negative_premises_ids"]:
+        print("pos: ", data_batch["pos_premise_ids"].size())
+        # for ids in data_batch["neg_premises_ids"]:
         #    max_len = max(max_len, ids.size(1))
         #    print("neg:", ids.size())
 
