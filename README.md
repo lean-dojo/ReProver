@@ -17,10 +17,13 @@ python retrieval/main.py fit --help
 
 To train on a single, use [this config file](retrieval/confs/cli_default.yaml). It takes ~2 days on one A100 GPU of 80 GB memory. 
 ```bash
-python -u retrieval/main.py fit --config retrieval/confs/cli_default.yaml
+python retrieval/main.py fit --config retrieval/confs/cli_default.yaml
 ```
 
 To train on multiple GPUs, use [this config file](retrieval/confs/cli_distributed.yaml)
+```bash
+python retrieval/main.py fit --config retrieval/confs/cli_distributed.yaml
+```
 
 Some CLI flags that may be useful:
 * `--trainer.devices`: You can use multiple GPUs.
