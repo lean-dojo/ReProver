@@ -287,7 +287,7 @@ class RetrievalDataset(Dataset):  # type: ignore
                 annot_tac, provenances = tac["annotated_tactic"]
                 marks = list(re.finditer(r"(?<=<a>).+?(?=</a>)", annot_tac))
 
-                for m, prov in zip(marks, provenances):
+                for i, (m, prov) in enumerate(zip(marks, provenances)):
                     def_path = Path(prov["def_path"])
                     assert def_path == file_path or def_path in deps
                     pos_premise = self.corpus.locate_premise(
