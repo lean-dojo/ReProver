@@ -27,7 +27,7 @@ trainer:
         mode: max
     - class_path: pytorch_lightning.callbacks.EarlyStopping
       init_args:
-        monitor: Recall@10_vl
+        monitor: Recall@10_val
         patience: 2
         mode: max
         verbose: true
