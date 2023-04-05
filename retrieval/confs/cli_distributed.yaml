@@ -1,23 +1,22 @@
 seed_everything: 3407  # https://arxiv.org/abs/2109.08203
 trainer:
   accelerator: gpu
-  devices: 1
+  devices: 3
   precision: bf16  # Caveat: fp16 doesn't work with pretrained T5. See https://github.com/huggingface/transformers/issues/10830
   strategy:
     class_path: pytorch_lightning.strategies.DeepSpeedStrategy
     init_args:
-      stage: 2
-      offload_optimizer: false
-      cpu_checkpointing: false
+      stage: 3
+      offload_optimizer: true
+      cpu_checkpointing: true
   gradient_clip_val: 1.0
   max_steps: 150000
-  accumulate_grad_batches: 4
+  accumulate_grad_batches: 1
   check_val_every_n_epoch: 2
   callbacks:
     - class_path: pytorch_lightning.callbacks.LearningRateMonitor
       init_args: 
         logging_interval: step
-    # TODO: Convert DeepSpeed checkpoints to PyTorch Lightning checkpoints.
     - class_path: pytorch_lightning.callbacks.ModelCheckpoint
       init_args:
         verbose: true
@@ -43,6 +42,6 @@ data:
   data_path: data/lean_bench/random/
   corpus_path: data/lean_bench/corpus.jsonl
   num_negatives: 3
-  batch_size: 8 
+  batch_size: 32
   max_seq_len: 1024
   num_workers: 8

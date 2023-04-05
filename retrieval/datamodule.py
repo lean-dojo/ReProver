@@ -1,10 +1,18 @@
+import re
+import pdb
+import json
+import torch
+import random
+from loguru import logger
+from copy import copy
 from tqdm import tqdm
 from pathlib import Path
 import pytorch_lightning as pl
 from transformers import ByT5Tokenizer
-from common import *
-from torch.utils.data import DataLoader
-from typing import Optional, Union
+from torch.utils.data import Dataset, DataLoader
+from typing import Union, Optional
+from lean_dojo import Pos
+from common import Context, Corpus, enumerate_alternatives
 
 
 class RetrievalDataset(Dataset):  # type: ignore
@@ -37,7 +45,7 @@ class RetrievalDataset(Dataset):  # type: ignore
                 annot_tac, provenances = tac["annotated_tactic"]
                 marks = list(re.finditer(r"(?<=<a>).+?(?=</a>)", annot_tac))
 
-                for m, prov in zip(marks, provenances):
+                for i, (m, prov) in enumerate(zip(marks, provenances)):
                     def_path = Path(prov["def_path"])
                     assert def_path == file_path or def_path in deps
                     pos_premise = self.corpus.locate_premise(
@@ -46,21 +54,24 @@ class RetrievalDataset(Dataset):  # type: ignore
                     if pos_premise is None:
                         num_discarded += 1
                     else:
-                        tactic_prefix = annot_tac[: m.start()]
-                        context = Context(
-                            file_path,
-                            thm["full_name"],
-                            Pos(*thm["start"]),
-                            tactic_prefix,
-                            tac["state_before"],
+                        all_prefixes = enumerate_alternatives(
+                            annot_tac[: m.start()], marks[:i], provenances[:i]
                         )
-                        self.data.append(
-                            {
-                                "context": context,
-                                "tactic_arg": m.group(),
-                                "pos_premise": pos_premise,
-                            }
-                        )
+                        for tp in all_prefixes:
+                            context = Context(
+                                file_path,
+                                thm["full_name"],
+                                Pos(*thm["start"]),
+                                tp,
+                                tac["state_before"],
+                            )
+                            self.data.append(
+                                {
+                                    "context": context,
+                                    "tactic_arg": m.group(),
+                                    "pos_premise": pos_premise,
+                                }
+                            )
 
         logger.info(
             f"{len(self.data)} examples remain after discarding {num_discarded} examples"
@@ -118,6 +129,7 @@ class RetrievalDataset(Dataset):  # type: ignore
             batch_size = len(examples)
             label = torch.zeros(batch_size, batch_size * (1 + self.num_negatives))
 
+            # TODO: What if multiple premises are all valid? E.g., rw [X ,Y]
             # Check if one's negative is another's positive
             for j in range(batch_size):
                 pos_premise = examples[j]["pos_premise"]
@@ -151,14 +163,13 @@ class RetrievalDataset(Dataset):  # type: ignore
                 batch["neg_premises_mask"].append(tokenized_neg_premise.attention_mask)
 
         for k in examples[0].keys():
-            if k not in ("context", "pos_premise", "neg_premises"):
+            if k not in batch:
                 batch[k] = [ex[k] for ex in examples]
 
         return batch
 
 
 class RetrievalDataModule(pl.LightningDataModule):
-    
     def __init__(
         self,
         data_path: Union[str, Path],

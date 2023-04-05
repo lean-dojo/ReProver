@@ -6,7 +6,7 @@ from loguru import logger
 import pytorch_lightning as pl
 import torch.nn.functional as F
 from typing import List, Dict, Any
-from retrieval.datamodule import Premise
+from common import Premise
 from transformers import T5EncoderModel, ByT5Tokenizer
 from transformers import get_cosine_schedule_with_warmup
 from deepspeed.ops.adam import FusedAdam, DeepSpeedCPUAdam
@@ -38,17 +38,29 @@ class PremiseRetriever(pl.LightningModule):
         # TODO: Retrieval and generation can share the backbone.
         # TODO: Do we need re-ranking?
 
+    def _cpu_checkpointing_enabled(self) -> bool:
+        return (
+            self.trainer.strategy is not None
+            and isinstance(self.trainer.strategy, DeepSpeedStrategy)
+            and "cpu_checkpointing" in self.trainer.strategy.config["zero_optimization"]
+        )
+
     def _encode(
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor
     ) -> torch.Tensor:
         """Encode a tokenized sequence represented by ``input_ids`` and ``attention_mask``
         into a feature vector using ``encoder``.
         """
-        hidden_states = self.encoder(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            return_dict=True,
-        ).last_hidden_state
+        if self._cpu_checkpointing_enabled():
+            hidden_states = torch.utils.checkpoint.checkpoint(
+                self.encoder, input_ids, attention_mask, use_reentrant=False
+            )[0]
+        else:
+            hidden_states = self.encoder(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                return_dict=True,
+            ).last_hidden_state
         # Masked average.
         lens = attention_mask.sum(dim=1)
         features = (hidden_states * attention_mask.unsqueeze(2)).sum(
@@ -181,11 +193,11 @@ class PremiseRetriever(pl.LightningModule):
         ):
             n = batch_size * batch_idx + i
             if i == 0:
-                tb.add_text(f"premise_gt_{split}", str(premise_gt), n)
+                msg = "\n\t ".join([p.serialize() for p in premises])
+                msg = f"{premise_gt in premises}\nGT: {premise_gt.serialize()}\n Retrieved:\n {msg}"
+                tb.add_text(f"premises_{split}", msg, n)
 
             for j in range(self.num_retrieved):
-                if i == 0:
-                    tb.add_text(f"premises_{j + 1}_{split}", str(premises[j]), n)
                 if premise_gt in premises[: (j + 1)]:
                     recall[j].append(1.0)
                 else:
