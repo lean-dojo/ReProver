@@ -3,36 +3,52 @@ import pdb
 import json
 import torch
 import random
-from loguru import logger
-from copy import copy
 from tqdm import tqdm
 from pathlib import Path
-import pytorch_lightning as pl
-from transformers import ByT5Tokenizer
-from torch.utils.data import Dataset, DataLoader
-from typing import Union, Optional
+from loguru import logger
+from copy import deepcopy
 from lean_dojo import Pos
-from common import Context, Corpus, enumerate_alternatives
+import pytorch_lightning as pl
+from typing import Union, Optional, List
+from torch.utils.data import Dataset, DataLoader
+from transformers import AutoTokenizer, ByT5Tokenizer
 
 
-class RetrievalDataset(Dataset):  # type: ignore
+from common import (
+    Context,
+    Corpus,
+    to_path,
+    format_state,
+    format_tactic,
+    Example,
+    Batch,
+    MARK_START_SYMBOL,
+    find_marks,
+)
+
+
+class RetrievalDataset(Dataset):
     def __init__(
         self,
         data_path: Path,
         corpus: Corpus,
         num_negatives: int,
         max_seq_len: int,
-        tokenizer: str,
+        p_remove_mark: float,
+        tokenizer: ByT5Tokenizer,
         is_train: bool,
     ) -> None:
         super().__init__()
         self.corpus = corpus
         self.num_negatives = num_negatives
         self.max_seq_len = max_seq_len
+        self.p_remove_mark = p_remove_mark
         self.tokenizer = tokenizer
         self.is_train = is_train
+        self.data = self._load_data(data_path)
 
-        self.data = []
+    def _load_data(self, data_path: Path) -> List[Example]:
+        data = []
         num_discarded = 0
         logger.info(f"Loading data from {data_path}")
 
@@ -43,7 +59,7 @@ class RetrievalDataset(Dataset):  # type: ignore
 
             for tac in thm["traced_tactics"]:
                 annot_tac, provenances = tac["annotated_tactic"]
-                marks = list(re.finditer(r"(?<=<a>).+?(?=</a>)", annot_tac))
+                marks = find_marks(annot_tac, include_symbols=False)
 
                 for i, (m, prov) in enumerate(zip(marks, provenances)):
                     def_path = Path(prov["def_path"])
@@ -52,38 +68,47 @@ class RetrievalDataset(Dataset):  # type: ignore
                         def_path, Pos(*prov["def_pos"])
                     )
                     if pos_premise is None:
+                        # Discard invalid premises.
                         num_discarded += 1
                     else:
-                        all_prefixes = enumerate_alternatives(
-                            annot_tac[: m.start()], marks[:i], provenances[:i]
+                        tactic_prefix = annot_tac[: m.start()]
+                        state = format_state(tac["state_before"])
+                        context = Context(
+                            file_path,
+                            thm["full_name"],
+                            Pos(*thm["start"]),
+                            tactic_prefix,
+                            state,
                         )
-                        for tp in all_prefixes:
-                            context = Context(
-                                file_path,
-                                thm["full_name"],
-                                Pos(*thm["start"]),
-                                tp,
-                                tac["state_before"],
-                            )
-                            self.data.append(
-                                {
-                                    "context": context,
-                                    "tactic_arg": m.group(),
-                                    "pos_premise": pos_premise,
-                                }
-                            )
+                        data.append(
+                            {
+                                "context": context,
+                                "provenances": provenances[:i],
+                                "pos_premise": pos_premise,
+                            }
+                        )
 
         logger.info(
-            f"{len(self.data)} examples remain after discarding {num_discarded} examples"
+            f"{len(data)} examples remain after discarding {num_discarded} examples."
         )
-        assert num_discarded / len(self.data) < 0.01
+        assert num_discarded / len(data) < 0.01
+        return data
 
     def __len__(self) -> int:
         return len(self.data)
 
-    def __getitem__(self, idx: int):
-        ex = copy(self.data[idx])
+    def __getitem__(self, idx: int) -> Example:
+        ex = deepcopy(self.data[idx])
+        if MARK_START_SYMBOL in ex["context"].tactic_prefix:
+            # For training, we randomly remove the mark with probability p_remove_mark.
+            # For evaluation, we always remove the mark.
+            p_remove_mark = self.p_remove_mark if self.is_train else 1.0
+            ex["context"].tactic_prefix = format_tactic(
+                (ex["context"].tactic_prefix, ex["provenances"]),
+                p_remove_mark,
+            )
 
+        # Sample negative premises from all accessible premises.
         if self.is_train:
             premises = [
                 p
@@ -92,14 +117,14 @@ class RetrievalDataset(Dataset):  # type: ignore
                 )
                 if p != ex["pos_premise"]
             ]
-            neg_premises = random.sample(premises, self.num_negatives)
-            ex["neg_premises"] = [p for p in neg_premises]
+            ex["neg_premises"] = random.sample(premises, self.num_negatives)
 
         return ex
 
-    def collate(self, examples):
+    def collate(self, examples: List[Example]) -> Batch:
         batch = {}
 
+        # Tokenize the context and positive premise.
         context = [ex["context"] for ex in examples]
         tokenized_context = self.tokenizer(
             [c.serialize() for c in context],
@@ -108,7 +133,6 @@ class RetrievalDataset(Dataset):  # type: ignore
             truncation=True,
             return_tensors="pt",
         )
-
         pos_premise = [ex["pos_premise"] for ex in examples]
         tokenized_pos_premise = self.tokenizer(
             [p.serialize() for p in pos_premise],
@@ -117,7 +141,6 @@ class RetrievalDataset(Dataset):  # type: ignore
             truncation=True,
             return_tensors="pt",
         )
-
         batch["context"] = context
         batch["context_ids"] = tokenized_context.input_ids
         batch["context_mask"] = tokenized_context.attention_mask
@@ -125,6 +148,7 @@ class RetrievalDataset(Dataset):  # type: ignore
         batch["pos_premise_ids"] = tokenized_pos_premise.input_ids
         batch["pos_premise_mask"] = tokenized_pos_premise.attention_mask
 
+        # Tokenize and label the (potentially) negative premises.
         if self.is_train:
             batch_size = len(examples)
             label = torch.zeros(batch_size, batch_size * (1 + self.num_negatives))
@@ -162,6 +186,7 @@ class RetrievalDataset(Dataset):  # type: ignore
                 batch["neg_premises_ids"].append(tokenized_neg_premise.input_ids)
                 batch["neg_premises_mask"].append(tokenized_neg_premise.attention_mask)
 
+        # Copy the rest of the fields.
         for k in examples[0].keys():
             if k not in batch:
                 batch[k] = [ex[k] for ex in examples]
@@ -177,22 +202,21 @@ class RetrievalDataModule(pl.LightningDataModule):
         num_negatives: int,
         model_name: str,
         batch_size: int,
+        eval_batch_size: int,
         max_seq_len: int,
+        p_remove_mark: float,
         num_workers: int,
     ) -> None:
         super().__init__()
-        if isinstance(data_path, str):
-            data_path = Path(data_path)
-        if isinstance(corpus_path, str):
-            corpus_path = Path(corpus_path)
-
-        self.data_path = data_path
+        self.data_path = to_path(data_path)
         self.num_negatives = num_negatives
         self.batch_size = batch_size
+        self.eval_batch_size = eval_batch_size
         self.max_seq_len = max_seq_len
+        self.p_remove_mark = p_remove_mark
         self.num_workers = num_workers
 
-        self.tokenizer = ByT5Tokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.corpus = Corpus(corpus_path)
 
     def prepare_data(self) -> None:
@@ -205,6 +229,7 @@ class RetrievalDataModule(pl.LightningDataModule):
                 self.corpus,
                 self.num_negatives,
                 self.max_seq_len,
+                self.p_remove_mark,
                 self.tokenizer,
                 is_train=True,
             )
@@ -215,21 +240,12 @@ class RetrievalDataModule(pl.LightningDataModule):
                 self.corpus,
                 self.num_negatives,
                 self.max_seq_len,
+                self.p_remove_mark,
                 self.tokenizer,
                 is_train=False,
             )
 
-        if stage in (None, "test"):
-            self.ds_test = RetrievalDataset(
-                self.data_path / "test.json",
-                self.corpus,
-                self.num_negatives,
-                self.max_seq_len,
-                self.tokenizer,
-                is_train=False,
-            )
-
-    def train_dataloader(self) -> DataLoader:  # type: ignore
+    def train_dataloader(self) -> DataLoader:
         return DataLoader(
             self.ds_train,
             self.batch_size,
@@ -240,22 +256,13 @@ class RetrievalDataModule(pl.LightningDataModule):
             drop_last=True,
         )
 
-    def val_dataloader(self) -> DataLoader:  # type: ignore
+    def val_dataloader(self) -> DataLoader:
         return DataLoader(
             self.ds_val,
-            self.batch_size,
+            self.eval_batch_size,
             num_workers=self.num_workers,
             collate_fn=self.ds_val.collate,
-            pin_memory=True,
-            drop_last=False,
-        )
-
-    def test_dataloader(self) -> DataLoader:  # type: ignore
-        return DataLoader(
-            self.ds_test,
-            self.batch_size,
-            num_workers=self.num_workers,
-            collate_fn=self.ds_test.collate,
+            shuffle=False,
             pin_memory=True,
             drop_last=False,
         )
@@ -269,22 +276,20 @@ if __name__ == "__main__":
         model_name="google/byt5-small",
         batch_size=8,
         max_seq_len=1024,
+        p_remove_mark=0.5,
         num_workers=8,
     )
     dm.prepare_data()
     dm.setup("fit")
 
-    # max_len = 0
     for i, data_batch in tqdm(
         enumerate(dm.train_dataloader()), total=len(dm.train_dataloader())
     ):
         if i == 0:
             print(data_batch)
-        # max_len = max(max_len, data_batch["pos_premise_ids"].size(1))
         print("pos: ", data_batch["pos_premise_ids"].size())
-        # for ids in data_batch["neg_premises_ids"]:
-        #    max_len = max(max_len, ids.size(1))
-        #    print("neg:", ids.size())
+        for ids in data_batch["neg_premises_ids"]:
+            print("neg:", ids.size())
 
     for i, data_batch in tqdm(enumerate(dm.val_dataloader())):
         if i == 0:
@@ -293,5 +298,3 @@ if __name__ == "__main__":
     for i, data_batch in tqdm(enumerate(dm.test_dataloader())):
         if i == 0:
             print(data_batch)
-
-    # print(max_len)

@@ -1,17 +1,18 @@
 seed_everything: 3407  # https://arxiv.org/abs/2109.08203
 trainer:
   accelerator: gpu
-  devices: 3
+  devices: 1
   precision: bf16-mixed  # Caveat: fp16 doesn't work with pretrained T5. See https://github.com/huggingface/transformers/issues/10830
   strategy:
     class_path: pytorch_lightning.strategies.DeepSpeedStrategy
     init_args:
-      stage: 3
-      offload_optimizer: true
-      cpu_checkpointing: true
+      stage: 2
+      offload_optimizer: false
+      cpu_checkpointing: false
   gradient_clip_val: 1.0
-  max_steps: 150000
-  accumulate_grad_batches: 1
+  max_steps: 200000
+  accumulate_grad_batches: 2
+  check_val_every_n_epoch: 4
   callbacks:
     - class_path: pytorch_lightning.callbacks.LearningRateMonitor
       init_args: 
@@ -21,28 +22,26 @@ trainer:
         verbose: true
         save_last: true
         save_top_k: 1
-        monitor: Recall@10_val
+        monitor: val_top5_acc
         auto_insert_metric_name: true
         mode: max
     - class_path: pytorch_lightning.callbacks.EarlyStopping
       init_args:
-        monitor: Recall@10_val
+        monitor: val_top5_acc
         patience: 2
         mode: max
         verbose: true
 
 model:
   model_name: google/byt5-small
-  lr: 1e-4
+  lr: 1e-3
   warmup_steps: 2000
-  num_retrieved: 10
+  num_beams: 5
+  topk: 5
 
 data:
   data_path: data/lean_bench/random/
-  corpus_path: data/lean_bench/corpus.jsonl
-  num_negatives: 3
-  batch_size: 32
-  eval_batch_size: 64
+  batch_size: 16  # effective_batch_size == batch_size * accumulate_grad_batches * devices
   max_seq_len: 1024
   p_remove_mark: 0.5
   num_workers: 8
