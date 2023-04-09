@@ -1,6 +1,7 @@
 import pdb
 import torch
 from pathlib import Path
+from lean_dojo import Pos
 from loguru import logger
 from transformers import (
     T5ForConditionalGeneration,
@@ -19,12 +20,12 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 
 
 from common import (
-    Corpus,
     get_optimizers,
     remove_marks,
     load_checkpoint,
     to_path,
     zip_strict,
+    MARK_START_SYMBOL,
 )
 
 
@@ -60,6 +61,9 @@ class TacticGenerator(ABC):
     def generate(
         self,
         state: str,
+        file_path: Path,
+        theorem_full_name: str,
+        theorem_pos: Pos,
         num_samples: int,
     ) -> List[Tuple[str, float]]:
         raise NotImplementedError
@@ -100,6 +104,9 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
     def generate(
         self,
         state: str,
+        file_path: Path,
+        theorem_full_name: str,
+        theorem_pos: Pos,
         num_samples: int,
     ) -> List[Tuple[str, float]]:
         # Prepare the input.
@@ -246,11 +253,21 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
 
 
 class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
-    def __init__(self, state, tokenizer, corpus, retriever) -> None:
+    def __init__(
+        self,
+        state,
+        file_path: Path,
+        theorem_full_name,
+        theorem_pos,
+        tokenizer,
+        retriever,
+    ) -> None:
         super().__init__()
         self.state = state
+        self.file_path = file_path
+        self.theorem_full_name = theorem_full_name
+        self.theorem_pos = theorem_pos
         self.tokenizer = tokenizer
-        self.corpus = corpus
         self.retriever = retriever
 
     def __call__(
@@ -259,9 +276,16 @@ class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
         # TODO: Can be more efficient by using batched retrieval or caching.
         prefixes = self.tokenizer.batch_decode(input_ids[:, 1:])
         num_beams = input_ids.size(0)
-        for p in prefixes:
-            if p.endswith("<a>"):
-                self.retriever.retrieve(self.corpus, self.state, p, num_beams)
+        for tactic_prefix in prefixes:
+            if tactic_prefix.endswith(MARK_START_SYMBOL):
+                premises, premise_scores = self.retriever.retrieve(
+                    self.state,
+                    self.file_path,
+                    self.theorem_full_name,
+                    self.theorem_pos,
+                    tactic_prefix,
+                    num_beams,
+                )
                 pdb.set_trace()
         return scores
 
@@ -331,28 +355,20 @@ class RetrievalAugmentedBeamScorer(BeamSearchScorer):
 class RetrivalAugmentedTacticGenerator(TacticGenerator):
     def __init__(
         self,
-        generator_ckpt: Union[str, Path],
-        retriever_ckpt: Union[str, Path],
-        corpus_path: Union[str, Path],
+        gen_ckpt: Union[str, Path],
+        ret_ckpt: Union[str, Path],
         device,
     ) -> None:
         super().__init__()
-        if not isinstance(generator_ckpt, Path):
-            generator_ckpt = Path(generator_ckpt)
-        if not isinstance(retriever_ckpt, Path):
-            retriever_ckpt = Path(retriever_ckpt)
-        if not isinstance(corpus_path, Path):
-            corpus_path = Path(corpus_path)
-        self.generator = TransformerTacticGenerator.load(
-            generator_ckpt, device, freeze=True
-        )
-        self.retriever = PremiseRetriever.load(retriever_ckpt, device, freeze=True)
-        self.corpus = Corpus(corpus_path)
-        self.retriever.reindex_corpus(self.corpus, 64)  # TODO: Make this configurable.
+        self.generator = TransformerTacticGenerator.load(gen_ckpt, device, freeze=True)
+        self.retriever = PremiseRetriever.load(ret_ckpt, device, freeze=True)
 
     def generate(
         self,
         state: str,
+        file_path: Path,
+        theorem_full_name: str,
+        theorem_pos: Pos,
         num_samples: int,
     ) -> List[Tuple[str, float]]:
         logger.info(state)
@@ -385,7 +401,12 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         logits_processor = LogitsProcessorList(
             [
                 RetrievalAugmentedLogitsProcessor(
-                    state, self.generator.tokenizer, self.corpus, self.retriever
+                    state,
+                    file_path,
+                    theorem_full_name,
+                    theorem_pos,
+                    self.generator.tokenizer,
+                    self.retriever,
                 )
             ]
         )
@@ -404,7 +425,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
 
         # Return the output.
         output_text = [
-            _remove_marks(_)
+            remove_marks(_)
             for _ in self.generator.tokenizer.batch_decode(
                 output.sequences, skip_special_tokens=True
             )

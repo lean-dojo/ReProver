@@ -7,23 +7,25 @@ import pickle
 import argparse
 from loguru import logger
 from pathlib import Path
-from typing import List
-from lean_dojo import LeanGitRepo, Theorem
+from typing import List, Tuple
+from lean_dojo import LeanGitRepo, Theorem, Pos
 from prover.search import Status, DistributedProver
 from lean_dojo import Theorem
 from generator.model import TransformerTacticGenerator, RetrivalAugmentedTacticGenerator
 
 
-def get_theorems(args) -> List[Theorem]:
+def get_theorems(args) -> Tuple[List[Theorem], List[Pos]]:
     data_path = Path(args.data_path)
     data = json.load((data_path / f"{args.split}.json").open())
-    theorems = [
-        Theorem(LeanGitRepo(t["url"], t["commit"]), t["file_path"], t["full_name"])
-        for t in data
-    ]
+    theorems = []
+    positions = []
+    for t in data:
+        repo = LeanGitRepo(t["url"], t["commit"])
+        theorems.append(Theorem(repo, t["file_path"], t["full_name"]))
+        positions.append(Pos(*t["start"]))
     random.shuffle(theorems)
     logger.info(f"{len(theorems)} theorems loaded from {data_path}")
-    return theorems
+    return theorems, positions
 
 
 def main() -> None:
@@ -43,24 +45,19 @@ def main() -> None:
         default="data/lean_bench/random",
     )
     parser.add_argument(
-        "--corpus-path",
-        type=str,
-        default="data/lean_bench/corpus.jsonl",
-    )
-    parser.add_argument(
         "--model",
         type=str,
         choices=["TransformerTacticGenerator", "RetrivalAugmentedTacticGenerator"],
         default="TransformerTacticGenerator",
     )
     parser.add_argument(
-        "--generator-ckpt-path",
+        "--gen-ckpt-path",
         type=str,
         required=True,
         help="Checkpoint of the tactic generator.",
     )
     parser.add_argument(
-        "--retriever-ckpt-path",
+        "--ret-ckpt-path",
         type=str,
         required=True,
         help="Checkpoint of the premise retriever.",
@@ -93,17 +90,17 @@ def main() -> None:
 
     logger.info(args)
 
-    theorems = get_theorems(args)
+    theorems, positions = get_theorems(args)
     device = torch.device("cpu")
 
     if args.model == "TransformerTacticGenerator":
         tac_gen = TransformerTacticGenerator.load(
-            args.generator_ckpt_path, device, freeze=True
+            args.gen_ckpt_path, device, freeze=True
         )
     else:
         assert args.model == "RetrivalAugmentedTacticGenerator"
         tac_gen = RetrivalAugmentedTacticGenerator(
-            args.generator_ckpt_path, args.retriever_ckpt_path, args.corpus_path, device
+            args.gen_ckpt_path, args.ret_ckpt_path, device
         )
 
     prover = DistributedProver(
@@ -115,7 +112,7 @@ def main() -> None:
         debug=args.verbose,
         distributed=(args.num_cpus > 1),
     )
-    results = prover.search_unordered(theorems)
+    results = prover.search_unordered(theorems, positions)
 
     num_proved = num_failed = num_discarded = 0
     for r in results:

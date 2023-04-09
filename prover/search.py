@@ -1,14 +1,12 @@
-import re
+import math
 import ray
 import time
 import heapq
 import torch
-from loguru import logger
-from typing import Optional, List
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from ray.util.actor_pool import ActorPool
+import graphviz
+from enum import Enum
 from lean_dojo import (
+    Pos,
     Dojo,
     Theorem,
     TacticState,
@@ -18,17 +16,18 @@ from lean_dojo import (
     DojoInitError,
     DojoCrashError,
 )
-
-from generator.model import TacticGenerator
-
-import math
-import graphviz
-from enum import Enum
+from pathlib import Path
+from loguru import logger
 from abc import ABC, abstractmethod
 from functools import total_ordering
 from dataclasses import dataclass, field
+from ray.util.actor_pool import ActorPool
 from typing import List, Optional, Iterable, Tuple
 from lean_dojo import ProofFinished, TacticState, TacticError
+
+
+from common import zip_strict
+from generator.model import TacticGenerator
 
 
 class Status(Enum):
@@ -470,7 +469,7 @@ class Prover(ABC):
     num_expansions: int = field(default=0, init=False, repr=False)
 
     @abstractmethod
-    def search(self, theorem: Theorem) -> SearchResult:
+    def search(self, thm: Theorem, pos: Pos) -> SearchResult:
         raise NotImplementedError
 
 
@@ -478,21 +477,20 @@ class Prover(ABC):
 class BestFirstSearchProver(Prover):
     num_sampled_tactics: int
 
-    def search(self, theorem: Theorem) -> Optional[SearchResult]:
-        logger.info(f"Proving {theorem}")
+    def search(self, thm: Theorem, pos: Pos) -> Optional[SearchResult]:
+        logger.info(f"Proving {thm}")
 
-        self.theorem = theorem
+        self.theorem = thm
+        self.posision = pos
         self.actor_time = 0.0
         self.environment_time = 0.0
         self.num_expansions = 0
 
         # Cache (state, action) -> (response, time) to avoid duplicate environment steps
-        self._transition_cache: Dict[
-            Tuple[ProofState, str], Tuple[Response, float]
-        ] = {}
+        self._transition_cache = {}
 
         try:
-            with Dojo(theorem) as (dojo, init_state):
+            with Dojo(thm) as (dojo, init_state):
                 self.dojo = dojo
                 self.root = InternalNode(
                     state=init_state,
@@ -507,7 +505,7 @@ class BestFirstSearchProver(Prover):
                     try:
                         self._best_first_search()
                     except DojoCrashError:
-                        logger.warning(f"Dojo crashed when proving {theorem}")
+                        logger.warning(f"Dojo crashed when proving {thm}")
                         pass
 
             if self.root.status == Status.PROVED:
@@ -517,7 +515,7 @@ class BestFirstSearchProver(Prover):
                 shortest_proof = fastest_proof = None
 
             result = SearchResult(
-                name=theorem.full_name,
+                name=thm.full_name,
                 status=self.root.status,
                 shortest_proof=shortest_proof,
                 fastest_proof=fastest_proof,
@@ -616,11 +614,13 @@ class BestFirstSearchProver(Prover):
         t0 = time.monotonic()
         suggestions = self.tac_gen.generate(
             state=ts,
+            file_path=Path(self.theorem.repo.name) / self.theorem.file_path,
+            theorem_full_name=self.theorem.full_name,
+            theorem_pos=self.posision,
             num_samples=self.num_sampled_tactics,
         )
         elapsed = time.monotonic() - t0
         self.actor_time += elapsed
-
         return suggestions
 
     def _run_tactic(self, node: InternalNode, tactic: str, logprob: float) -> Edge:
@@ -781,13 +781,18 @@ class DistributedProver:
                 debug=debug,
             )
 
-    def search_unordered(self, theorems: List[Theorem]) -> List[SearchResult]:
+    def search_unordered(
+        self, theorems: List[Theorem], positions: List[Pos]
+    ) -> List[SearchResult]:
         if self.distributed:
             results = list(
                 self.prover_pool.map_unordered(
-                    lambda p, t: p.search.remote(t), theorems
+                    lambda p, x: p.search.remote(x[0], x[1]),
+                    zip_strict(theorems, positions),
                 )
             )
         else:
-            results = [self.prover.search(t) for t in theorems]
+            results = [
+                self.prover.search(t, pos) for t, pos in zip_strict(theorems, positions)
+            ]
         return results

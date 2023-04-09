@@ -46,7 +46,9 @@ def remove_marks(s: str) -> str:
 
 def to_path(p: Union[str, Path]) -> Path:
     """Convert ``p`` to a :class:`Path` object."""
-    if not isinstance(p, Path):
+    if isinstance(p, Path):
+        return p
+    else:
         return Path(p)
 
 

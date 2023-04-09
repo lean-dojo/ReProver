@@ -6,9 +6,11 @@ from pathlib import Path
 from loguru import logger
 import pytorch_lightning as pl
 import torch.nn.functional as F
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, Tuple
 from transformers import T5EncoderModel, AutoTokenizer
 from pytorch_lightning.strategies.deepspeed import DeepSpeedStrategy
+
+
 from common import (
     Premise,
     Context,
@@ -16,6 +18,7 @@ from common import (
     load_checkpoint,
     to_path,
     zip_strict,
+    MARK_START_SYMBOL,
 )
 
 
@@ -38,7 +41,7 @@ class PremiseRetriever(pl.LightningModule):
         self.num_retrieved = num_retrieved
         self.max_seq_len = max_seq_len
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.enc_dec = T5EncoderModel.from_pretrained(model_name)
+        self.encoder = T5EncoderModel.from_pretrained(model_name)
         self.corpus = None
         self.stale_corpus_embeddings = True
         # TODO: Do we need re-ranking?
@@ -197,8 +200,10 @@ class PremiseRetriever(pl.LightningModule):
         ):
             # Only log the first example in the batch.
             if i == 0:
-                msg = "\n".join([p.serialize() for p in premises])
-                msg = f"{premise_gt in premises}\Ground truth:\n `{premise_gt.serialize()}`\n Retrieved:\n```\n{msg}\n```"
+                msg = "\n\n".join(
+                    [f"{j}. {p.serialize()}" for j, p in enumerate(premises)]
+                )
+                msg = f"{premise_gt in premises}\nGround truth:\n `{premise_gt.serialize()}`\n Retrieved:\n```\n{msg}\n```"
                 tb.add_text(f"premises_val", msg, self.global_step)
 
             for j in range(self.num_retrieved):
@@ -223,10 +228,18 @@ class PremiseRetriever(pl.LightningModule):
             self.parameters(), self.trainer, self.lr, self.warmup_steps
         )
 
-    def retrieve(self, state: str, tactic_prefix: str, k: int) -> List[Premise]:
+    def retrieve(
+        self,
+        state: str,
+        file_name,
+        theorem_full_name,
+        theorem_pos,
+        tactic_prefix: str,
+        k: int,
+    ) -> Tuple[List[Premise], List[float]]:
         # """Retrieve ``k`` premises from ``corpus`` using ``state`` and ``tactic_prefix`` as context."""
-        assert tactic_prefix.endswith("<a>")
-        ctx = Context(state, tactic_prefix)
+        assert tactic_prefix.endswith(MARK_START_SYMBOL)
+        ctx = Context(file_name, theorem_full_name, theorem_pos, state, tactic_prefix)
         ctx_tokens = self.tokenizer(
             ctx.serialize(),
             max_length=self.max_seq_len,
@@ -237,4 +250,4 @@ class PremiseRetriever(pl.LightningModule):
         retrieved_premises, scores = self.corpus.get_nearest_premises(
             [ctx], context_emb, k
         )
-        pdb.set_trace()
+        return retrieved_premises[0], scores[0]
