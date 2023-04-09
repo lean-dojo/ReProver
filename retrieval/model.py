@@ -150,9 +150,10 @@ class PremiseRetriever(pl.LightningModule):
         outputs = []
 
         for _ in self.validation_step_outputs:
-            for pos_premise, retrieved_premises, scores in zip_strict(*_):
+            for context, pos_premise, retrieved_premises, scores in zip_strict(*_):
                 outputs.append(
                     {
+                        "context": context,
                         "pos_premise": pos_premise,
                         "retrieved_premises": retrieved_premises,
                         "scores": scores,
@@ -247,7 +248,7 @@ class PremiseRetriever(pl.LightningModule):
             )
 
         self.validation_step_outputs.append(
-            (batch["pos_premise"], retrieved_premises, scores)
+            (batch["context"], batch["pos_premise"], retrieved_premises, scores)
         )
 
     def configure_optimizers(self) -> Dict[str, Any]:
