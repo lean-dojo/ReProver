@@ -1,5 +1,6 @@
 import pdb
 import torch
+import pickle
 import numpy as np
 from tqdm import tqdm
 from pathlib import Path
@@ -44,6 +45,7 @@ class PremiseRetriever(pl.LightningModule):
         self.encoder = T5EncoderModel.from_pretrained(model_name)
         self.corpus = None
         self.stale_corpus_embeddings = True
+        self.validation_step_outputs = []
         # TODO: Do we need re-ranking?
 
     @classmethod
@@ -145,6 +147,27 @@ class PremiseRetriever(pl.LightningModule):
 
     def on_validation_end(self) -> None:
         self.corpus.cpu()
+        outputs = []
+
+        for _ in self.validation_step_outputs:
+            for pos_premise, retrieved_premises, scores in zip_strict(*_):
+                outputs.append(
+                    {
+                        "pos_premise": pos_premise,
+                        "retrieved_premises": retrieved_premises,
+                        "scores": scores,
+                    }
+                )
+
+        path = (
+            Path(self.trainer.log_dir)
+            / f"epoch{self.current_epoch}_validation_outputs.pickle"
+        )
+        with path.open("wb") as oup:
+            pickle.dump(outputs, oup)
+        logger.info(f"Validation outputs saved to {path}")
+
+        self.validation_step_outputs.clear()
 
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         assert self.corpus.has_embeddings and not self.stale_corpus_embeddings
@@ -187,7 +210,7 @@ class PremiseRetriever(pl.LightningModule):
         """Retrieve premises and calculate Recall@K evaluation metrics."""
         # Retrieval.
         context_emb = self._encode(batch["context_ids"], batch["context_mask"]).float()
-        retrieved_premises, _ = self.corpus.get_nearest_premises(
+        retrieved_premises, scores = self.corpus.get_nearest_premises(
             batch["context"], context_emb, self.num_retrieved
         )
 
@@ -222,6 +245,10 @@ class PremiseRetriever(pl.LightningModule):
                 sync_dist=True,
                 batch_size=len(batch),
             )
+
+        self.validation_step_outputs.append(
+            (batch["pos_premise"], retrieved_premises, scores)
+        )
 
     def configure_optimizers(self) -> Dict[str, Any]:
         return get_optimizers(
