@@ -13,7 +13,7 @@ dependencies:
   - mypy
   - pytorch-cuda=11.7
   - pytorch
-  - rich
+  - graphviz
   - pip
   - pip:
     - deepspeed

@@ -1,13 +1,13 @@
 import os
 from loguru import logger
-from retrieval.model import PremiseRetriever
-from retrieval.datamodule import RetrievalDataModule
+from generator.model import TransformerTacticGenerator
+from generator.datamodule import GeneratorDataModule
 from common import CLI
 
 
 def main() -> None:
     logger.info(f"PID: {os.getpid()}")
-    cli = CLI(PremiseRetriever, RetrievalDataModule)
+    cli = CLI(TransformerTacticGenerator, GeneratorDataModule)
     print("Configuration: \n", cli.config)
 
 
