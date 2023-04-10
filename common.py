@@ -44,6 +44,23 @@ def remove_marks(s: str) -> str:
     return s.replace(MARK_START_SYMBOL, "").replace(MARK_END_SYMBOL, "")
 
 
+def _has_nested_mark(s: str) -> bool:
+    return any(
+        MARK_START_SYMBOL in m.group() or MARK_END_SYMBOL in m.group()
+        for m in find_marks(s, include_symbols=False)
+    )
+
+
+def find_open_mark(s: str) -> Optional[str]:
+    """Check if ``s`` has an open :code:`<a>` that is not closed by :code:`</a>`.
+    If so, return the substring from the open :code:`<a>` to the end of ``s``."""
+    assert not _has_nested_mark(s)
+    if s.count(MARK_START_SYMBOL) > s.count(MARK_END_SYMBOL):
+        return s[s.rfind(MARK_START_SYMBOL) + len(MARK_START_SYMBOL) :]
+    else:
+        return None
+
+
 def to_path(p: Union[str, Path]) -> Path:
     """Convert ``p`` to a :class:`Path` object."""
     if isinstance(p, Path):

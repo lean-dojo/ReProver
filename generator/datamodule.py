@@ -32,7 +32,7 @@ class GeneratorDataset(Dataset):
         data = []
         for thm in tqdm(json.load(data_path.open())):
             for tac in thm["traced_tactics"]:
-                self.data.append(
+                data.append(
                     {
                         "url": thm["url"],
                         "commit": thm["commit"],
@@ -43,7 +43,7 @@ class GeneratorDataset(Dataset):
                     }
                 )
 
-        logger.info(f"{len(self.data)} examples loaded")
+        logger.info(f"{len(data)} examples loaded")
         return data
 
     def __len__(self) -> int:

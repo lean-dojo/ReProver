@@ -1,4 +1,5 @@
 import pdb
+import math
 import torch
 from pathlib import Path
 from lean_dojo import Pos
@@ -6,6 +7,7 @@ from loguru import logger
 from transformers import (
     T5ForConditionalGeneration,
     AutoTokenizer,
+    ByT5Tokenizer,
     BeamSearchScorer,
     StoppingCriteriaList,
     MaxLengthCriteria,
@@ -14,6 +16,7 @@ from transformers import (
 )
 import pytorch_lightning as pl
 from torchmetrics import Metric
+from collections import defaultdict
 from abc import ABC, abstractmethod
 from retrieval.model import PremiseRetriever
 from typing import List, Dict, Any, Optional, Tuple, Union
@@ -22,10 +25,12 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 from common import (
     get_optimizers,
     remove_marks,
+    find_open_mark,
     load_checkpoint,
     to_path,
     zip_strict,
     MARK_START_SYMBOL,
+    MARK_END_SYMBOL,
 )
 
 
@@ -237,7 +242,7 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
         ]
 
         tb = self.logger.experiment
-        msg = "\n".join(tactics_pred[0][k])
+        msg = "\n".join(tactics_pred[0])
         tb.add_text(f"val_preds", f"```\n{msg}\n```", self.global_step)
 
         # Log the topk accuracies.
@@ -261,22 +266,27 @@ class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
         theorem_pos,
         tokenizer,
         retriever,
+        num_beams: int,
     ) -> None:
         super().__init__()
         self.state = state
         self.file_path = file_path
         self.theorem_full_name = theorem_full_name
         self.theorem_pos = theorem_pos
+        assert isinstance(tokenizer, ByT5Tokenizer)
         self.tokenizer = tokenizer
         self.retriever = retriever
+        self.num_beams = num_beams
+        self.premise_names = [None for _ in range(num_beams)]
+        self.premise_scores = [None for _ in range(num_beams)]
 
     def __call__(
         self, input_ids: torch.LongTensor, scores: torch.FloatTensor
     ) -> torch.FloatTensor:
-        # TODO: Can be more efficient by using batched retrieval or caching.
         prefixes = self.tokenizer.batch_decode(input_ids[:, 1:])
-        num_beams = input_ids.size(0)
-        for tactic_prefix in prefixes:
+        # pdb.set_trace()
+
+        for i, tactic_prefix in enumerate(prefixes):
             if tactic_prefix.endswith(MARK_START_SYMBOL):
                 premises, premise_scores = self.retriever.retrieve(
                     self.state,
@@ -284,30 +294,108 @@ class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
                     self.theorem_full_name,
                     self.theorem_pos,
                     tactic_prefix,
-                    num_beams,
+                    self.num_beams,
                 )
-                pdb.set_trace()
+                premise_names = [p.full_name + MARK_END_SYMBOL for p in premises]
+                self._update_retrieved_premises(i, premise_names, premise_scores)
+            elif tactic_prefix.endswith(MARK_END_SYMBOL):
+                self._update_retrieved_premises(i, None, None)
+
+            name_prefix = find_open_mark(tactic_prefix)
+            if name_prefix is not None:
+                # Modify scores[i].
+                possible_suffixes = []
+                suffix_scores = []
+                for s, p in zip_strict(self.premise_names[i], self.premise_scores[i]):
+                    if s.startswith(name_prefix) and s != name_prefix:
+                        possible_suffixes.append(s[len(name_prefix) :])
+                        suffix_scores.append(p)
+
+                assert len(possible_suffixes) > 0
+                suffix_probs = torch.tensor(suffix_scores).softmax(dim=0).tolist()
+                byte_probs = defaultdict(float)
+                for s, p in zip_strict(possible_suffixes, suffix_probs):
+                    byte_probs[s[0].encode("utf-8")] += p
+
+                scores[i].fill_(-float("inf"))
+                for b, p in byte_probs.items():
+                    b_id = self.tokenizer.convert_tokens_to_ids([b])[0]
+                    if b_id == self.tokenizer.unk_token_id:
+                        pdb.set_trace()
+                    scores[i, b_id] = math.log(p)
+
         return scores
 
+    def _update_retrieved_premises(
+        self,
+        beam_idx: int,
+        premise_names: Optional[List[str]],
+        premise_scores: Optional[List[float]],
+    ) -> None:
+        assert (premise_names is None) == (premise_scores is None)
+        if premise_names is None:
+            assert self.premise_names[beam_idx] is not None
+            assert self.premise_scores[beam_idx] is not None
+        else:
+            assert self.premise_names[beam_idx] is None
+            assert self.premise_scores[beam_idx] is None
+        self.premise_names[beam_idx] = premise_names
+        self.premise_scores[beam_idx] = premise_scores
 
-class RetrievalAugmentedBeamScorer(BeamSearchScorer):
+    def process(self, next_beam_indices: List[int]) -> None:
+        self.premise_names = [self.premise_names[i] for i in next_beam_indices]
+        self.premise_scores = [self.premise_scores[i] for i in next_beam_indices]
+
+
+class BeamSearchHelper:
     def __init__(
         self,
-        batch_size,
+        state: str,
+        file_path: Path,
+        theorem_full_name: str,
+        theorem_pos: Pos,
+        tokenizer: ByT5Tokenizer,
+        retriever,
         num_beams,
         device,
-        do_early_stopping,
-        num_beam_hyps_to_keep,
         max_length,
-    ):
-        super().__init__(
-            batch_size,
+    ) -> None:
+        self.logits_processor = RetrievalAugmentedLogitsProcessor(
+            state,
+            file_path,
+            theorem_full_name,
+            theorem_pos,
+            tokenizer,
+            retriever,
             num_beams,
-            device,
-            do_early_stopping=do_early_stopping,
-            num_beam_hyps_to_keep=num_beam_hyps_to_keep,
+        )
+
+        self.beam_scorer = BeamSearchScorer(
+            batch_size=1,
+            num_beams=num_beams,
+            device=device,
+            # do_early_stopping=False,
+            do_early_stopping="never",
+            num_beam_hyps_to_keep=num_beams,
             max_length=max_length,
         )
+
+    @property
+    def _beam_hyps(self):
+        return self.beam_scorer._beam_hyps
+
+    @property
+    def num_beams(self):
+        return self.beam_scorer.num_beams
+
+    @property
+    def is_done(self):
+        return self.beam_scorer.is_done
+
+    def __call__(
+        self, input_ids: torch.LongTensor, scores: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        return self.logits_processor(input_ids, scores)
 
     def process(
         self,
@@ -319,7 +407,7 @@ class RetrievalAugmentedBeamScorer(BeamSearchScorer):
         eos_token_id: Optional[Union[int, List[int]]] = None,
         beam_indices: Optional[torch.LongTensor] = None,
     ) -> Tuple[torch.Tensor]:
-        return super().process(
+        result = self.beam_scorer.process(
             input_ids,
             next_scores,
             next_tokens,
@@ -328,6 +416,8 @@ class RetrievalAugmentedBeamScorer(BeamSearchScorer):
             eos_token_id,
             beam_indices,
         )
+        self.logits_processor.process(result["next_beam_indices"].tolist())
+        return result
 
     def finalize(
         self,
@@ -340,7 +430,7 @@ class RetrievalAugmentedBeamScorer(BeamSearchScorer):
         eos_token_id: Optional[Union[int, List[int]]] = None,
         beam_indices: Optional[torch.LongTensor] = None,
     ) -> Tuple[torch.LongTensor]:
-        return super().finalize(
+        return self.beam_scorer.finalize(
             input_ids,
             final_beam_scores,
             final_beam_tokens,
@@ -390,32 +480,24 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         encoder_outputs = self.generator.seq2seq.encoder(
             state_ids.repeat_interleave(num_samples, dim=0)
         )
-        beam_scorer = BeamSearchScorer(
-            batch_size=1,
+        helper = BeamSearchHelper(
+            state,
+            file_path,
+            theorem_full_name,
+            theorem_pos,
+            self.generator.tokenizer,
+            self.retriever,
             num_beams=num_samples,
             device=self.generator.device,
-            do_early_stopping=True,
-            num_beam_hyps_to_keep=num_samples,
             max_length=self.generator.max_seq_len,
         )
-        logits_processor = LogitsProcessorList(
-            [
-                RetrievalAugmentedLogitsProcessor(
-                    state,
-                    file_path,
-                    theorem_full_name,
-                    theorem_pos,
-                    self.generator.tokenizer,
-                    self.retriever,
-                )
-            ]
-        )
+        logits_processor = LogitsProcessorList([helper])
         stopping_criteria = StoppingCriteriaList(
             [MaxLengthCriteria(self.generator.max_seq_len)]
         )
         output = self.generator.seq2seq.beam_search(
             decoder_input_ids,
-            beam_scorer,
+            helper,
             logits_processor=logits_processor,
             stopping_criteria=stopping_criteria,
             output_scores=True,
