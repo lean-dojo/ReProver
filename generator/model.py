@@ -1,6 +1,7 @@
 import pdb
 import math
 import torch
+from copy import deepcopy
 from pathlib import Path
 from lean_dojo import Pos
 from loguru import logger
@@ -25,6 +26,7 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 from common import (
     get_optimizers,
     remove_marks,
+    is_well_formed,
     find_open_mark,
     load_checkpoint,
     to_path,
@@ -137,7 +139,7 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
             num_beams=num_samples,
             do_sample=False,
             num_return_sequences=num_samples,
-            early_stopping=True,
+            early_stopping="never",
             output_scores=True,
             return_dict_in_generate=True,
         )
@@ -232,7 +234,7 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
             num_beams=self.num_beams,
             do_sample=False,
             num_return_sequences=self.topk,
-            early_stopping=True,
+            early_stopping="never",
         )
         output_text = self.tokenizer.batch_decode(output, skip_special_tokens=True)
         batch_size = state_ids.size(0)
@@ -284,10 +286,12 @@ class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
         self, input_ids: torch.LongTensor, scores: torch.FloatTensor
     ) -> torch.FloatTensor:
         prefixes = self.tokenizer.batch_decode(input_ids[:, 1:])
-        # pdb.set_trace()
 
         for i, tactic_prefix in enumerate(prefixes):
-            if tactic_prefix.endswith(MARK_START_SYMBOL):
+            if not is_well_formed(tactic_prefix):
+                pdb.set_trace()
+                continue
+            elif tactic_prefix.endswith(MARK_START_SYMBOL):
                 premises, premise_scores = self.retriever.retrieve(
                     self.state,
                     self.file_path,
@@ -297,9 +301,19 @@ class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
                     self.num_beams,
                 )
                 premise_names = [p.full_name + MARK_END_SYMBOL for p in premises]
-                self._update_retrieved_premises(i, premise_names, premise_scores)
+                # logger.info(f"tactic_prefix: {tactic_prefix}")
+                # logger.info(f"premise_names: {premise_names}")
+                try:
+                    self._update_retrieved_premises(i, premise_names, premise_scores)
+                except Exception:
+                    pdb.set_trace()
             elif tactic_prefix.endswith(MARK_END_SYMBOL):
-                self._update_retrieved_premises(i, None, None)
+                # logger.info(f"tactic_prefix: {tactic_prefix}")
+                # logger.info(f"premise_names: {premise_names}")
+                try:
+                    self._update_retrieved_premises(i, None, None)
+                except Exception:
+                    pdb.set_trace()
 
             name_prefix = find_open_mark(tactic_prefix)
             if name_prefix is not None:
@@ -320,8 +334,7 @@ class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
                 scores[i].fill_(-float("inf"))
                 for b, p in byte_probs.items():
                     b_id = self.tokenizer.convert_tokens_to_ids([b])[0]
-                    if b_id == self.tokenizer.unk_token_id:
-                        pdb.set_trace()
+                    assert b_id != self.tokenizer.unk_token_id
                     scores[i, b_id] = math.log(p)
 
         return scores
@@ -343,8 +356,14 @@ class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
         self.premise_scores[beam_idx] = premise_scores
 
     def process(self, next_beam_indices: List[int]) -> None:
-        self.premise_names = [self.premise_names[i] for i in next_beam_indices]
-        self.premise_scores = [self.premise_scores[i] for i in next_beam_indices]
+        # if next_beam_indices != list(range(self.num_beams)):
+        #    pdb.set_trace()
+        self.premise_names = [
+            deepcopy(self.premise_names[i]) for i in next_beam_indices
+        ]
+        self.premise_scores = [
+            deepcopy(self.premise_scores[i]) for i in next_beam_indices
+        ]
 
 
 class BeamSearchHelper:
@@ -374,7 +393,6 @@ class BeamSearchHelper:
             batch_size=1,
             num_beams=num_beams,
             device=device,
-            # do_early_stopping=False,
             do_early_stopping="never",
             num_beam_hyps_to_keep=num_beams,
             max_length=max_length,

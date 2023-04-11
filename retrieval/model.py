@@ -43,8 +43,10 @@ class PremiseRetriever(pl.LightningModule):
         self.max_seq_len = max_seq_len
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.encoder = T5EncoderModel.from_pretrained(model_name)
+
         self.corpus = None
-        self.stale_corpus_embeddings = True
+        self.embeddings_staled = True
+
         self.validation_step_outputs = []
         # TODO: Do we need re-ranking?
 
@@ -53,6 +55,10 @@ class PremiseRetriever(pl.LightningModule):
         cls, ckpt_path: Union[str, Path], device, freeze: bool
     ) -> "PremiseRetriever":
         return load_checkpoint(cls, to_path(ckpt_path), device, freeze)
+
+    @property
+    def embedding_size(self) -> int:
+        return self.encoder.config.hidden_size
 
     def _cpu_checkpointing_enabled(self) -> bool:
         try:
@@ -129,24 +135,53 @@ class PremiseRetriever(pl.LightningModule):
         )
         return loss
 
+    def _init_corpus_embeddings(self) -> None:
+        corpus_embeddings = torch.zeros(
+            len(self.corpus.all_premises),
+            self.embedding_size,
+            dtype=self.encoder.dtype,
+            device=self.device,
+        )
+        self.register_buffer("corpus_embeddings", corpus_embeddings)
+        self.embeddings_staled = True
+
     def on_fit_start(self) -> None:
         self.corpus = self.trainer.datamodule.corpus
+        self._init_corpus_embeddings()
+
         if self.logger is not None:
             self.logger.log_hyperparams(self.hparams)
             assert self.trainer is not None
             logger.info(f"Logging to {self.trainer.log_dir}")
 
+    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        assert not self.embeddings_staled
+        checkpoint["corpus"] = self.corpus
+
+    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        # This is to keep backward compatibility.
+        if "corpus" not in checkpoint:
+            assert self.embeddings_staled
+            return
+
+        self.corpus = checkpoint["corpus"]
+        if "corpus_embeddings" not in checkpoint:
+            self._init_corpus_embeddings()
+        else:
+            assert checkpoint["corpus_embeddings"].size() == (
+                len(self.corpus),
+                self.embedding_size,
+            )
+            self.embeddings_staled = False
+
     def on_train_batch_end(self, outputs, batch, batch_idx: int) -> None:
-        self.stale_corpus_embeddings = True
+        self.embeddings_staled = True
 
     def on_validation_start(self) -> None:
-        if self.stale_corpus_embeddings:
+        if self.embeddings_staled:
             self.reindex_corpus(16 * self.trainer.datamodule.batch_size)
-            self.stale_corpus_embeddings = False
-        self.corpus.to(self.device)
 
     def on_validation_end(self) -> None:
-        self.corpus.cpu()
         outputs = []
 
         for _ in self.validation_step_outputs:
@@ -170,49 +205,33 @@ class PremiseRetriever(pl.LightningModule):
 
         self.validation_step_outputs.clear()
 
-    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        assert self.corpus.has_embeddings and not self.stale_corpus_embeddings
-        checkpoint["corpus"] = self.corpus
-
-    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        if "corpus" in checkpoint:
-            self.corpus = checkpoint["corpus"]
-            self.stale_corpus_embeddings = False
-        else:
-            assert self.stale_corpus_embeddings
-
+    @torch.no_grad()
     def reindex_corpus(self, batch_size: int) -> None:
         """Re-index the retrieval corpus using the up-to-date encoder."""
         logger.info("Re-indexing the retrieval corpus")
 
-        @torch.no_grad()
-        def corpus_encoder(all_premises: List[Premise]) -> torch.Tensor:
-            premise_embeddings = []
+        for i in tqdm(range(0, len(self.corpus), batch_size)):
+            batch_premises = self.corpus.all_premises[i : i + batch_size]
+            tokenized_premises = self.tokenizer(
+                [p.serialize() for p in batch_premises],
+                padding="longest",
+                max_length=self.max_seq_len,
+                truncation=True,
+                return_tensors="pt",
+            ).to(self.device)
+            self.corpus_embeddings[i : i + batch_size] = self._encode(
+                tokenized_premises.input_ids, tokenized_premises.attention_mask
+            )
 
-            for i in tqdm(range(0, len(all_premises), batch_size)):
-                batch_premises = all_premises[i : i + batch_size]
-                tokenized_premises = self.tokenizer(
-                    [p.serialize() for p in batch_premises],
-                    padding="longest",
-                    max_length=self.max_seq_len,
-                    truncation=True,
-                    return_tensors="pt",
-                ).to(self.device)
-                emb = self._encode(
-                    tokenized_premises.input_ids, tokenized_premises.attention_mask
-                )
-                premise_embeddings.append(emb)
-
-            return torch.cat(premise_embeddings).float().cpu()
-
-        self.corpus.update_embeddings(corpus_encoder)
+        self.embeddings_staled = False
 
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> None:
         """Retrieve premises and calculate Recall@K evaluation metrics."""
         # Retrieval.
-        context_emb = self._encode(batch["context_ids"], batch["context_mask"]).float()
+        context_emb = self._encode(batch["context_ids"], batch["context_mask"])
+        assert not self.embeddings_staled
         retrieved_premises, scores = self.corpus.get_nearest_premises(
-            batch["context"], context_emb, self.num_retrieved
+            self.corpus_embeddings, batch["context"], context_emb, self.num_retrieved
         )
 
         # Evaluation & logging.
@@ -266,16 +285,22 @@ class PremiseRetriever(pl.LightningModule):
         k: int,
     ) -> Tuple[List[Premise], List[float]]:
         # """Retrieve ``k`` premises from ``corpus`` using ``state`` and ``tactic_prefix`` as context."""
+        if self.embeddings_staled:
+            # TODO: This is for backward compatibility. Remove it in the future.
+            self.reindex_corpus(batch_size=64)
         assert tactic_prefix.endswith(MARK_START_SYMBOL)
-        ctx = Context(file_name, theorem_full_name, theorem_pos, state, tactic_prefix)
+        ctx = Context(file_name, theorem_full_name, theorem_pos, tactic_prefix, state)
         ctx_tokens = self.tokenizer(
             ctx.serialize(),
             max_length=self.max_seq_len,
             truncation=True,
             return_tensors="pt",
         )
-        context_emb = self._encode(ctx_tokens.input_ids, ctx_tokens.attention_mask)
+        context_emb = self._encode(
+            ctx_tokens.input_ids.to(self.device),
+            ctx_tokens.attention_mask.to(self.device),
+        )
         retrieved_premises, scores = self.corpus.get_nearest_premises(
-            [ctx], context_emb, k
+            self.corpus_embeddings, [ctx], context_emb, k
         )
         return retrieved_premises[0], scores[0]

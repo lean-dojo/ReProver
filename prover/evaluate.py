@@ -20,6 +20,10 @@ def get_theorems(args) -> Tuple[List[Theorem], List[Pos]]:
     theorems = []
     positions = []
     for t in data:
+        if args.file_path is not None and t["file_path"] != args.file_path:
+            continue
+        if args.full_name is not None and t["full_name"] != args.full_name:
+            continue
         repo = LeanGitRepo(t["url"], t["commit"])
         theorems.append(Theorem(repo, t["file_path"], t["full_name"]))
         positions.append(Pos(*t["start"]))
@@ -44,6 +48,8 @@ def main() -> None:
         type=str,
         default="data/lean_bench/random",
     )
+    parser.add_argument("--file-path", type=str)
+    parser.add_argument("--full-name", type=str)
     parser.add_argument(
         "--model",
         type=str,
@@ -91,7 +97,8 @@ def main() -> None:
     logger.info(args)
 
     theorems, positions = get_theorems(args)
-    device = torch.device("cpu")
+    # device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if args.model == "TransformerTacticGenerator":
         tac_gen = TransformerTacticGenerator.load(
