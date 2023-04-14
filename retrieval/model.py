@@ -165,13 +165,15 @@ class PremiseRetriever(pl.LightningModule):
             return
 
         self.corpus = checkpoint["corpus"]
-        if "corpus_embeddings" not in checkpoint:
+        state_dict = checkpoint["state_dict"]
+        if "corpus_embeddings" not in state_dict:
             self._init_corpus_embeddings()
         else:
-            assert checkpoint["corpus_embeddings"].size() == (
+            assert state_dict["corpus_embeddings"].size() == (
                 len(self.corpus),
                 self.embedding_size,
             )
+            self.register_buffer("corpus_embeddings", state_dict["corpus_embeddings"])
             self.embeddings_staled = False
 
     def on_train_batch_end(self, outputs, batch, batch_idx: int) -> None:
@@ -285,9 +287,6 @@ class PremiseRetriever(pl.LightningModule):
         k: int,
     ) -> Tuple[List[Premise], List[float]]:
         # """Retrieve ``k`` premises from ``corpus`` using ``state`` and ``tactic_prefix`` as context."""
-        if self.embeddings_staled:
-            # TODO: This is for backward compatibility. Remove it in the future.
-            self.reindex_corpus(batch_size=64)
         assert tactic_prefix.endswith(MARK_START_SYMBOL)
         ctx = Context(file_name, theorem_full_name, theorem_pos, tactic_prefix, state)
         ctx_tokens = self.tokenizer(
@@ -300,6 +299,7 @@ class PremiseRetriever(pl.LightningModule):
             ctx_tokens.input_ids.to(self.device),
             ctx_tokens.attention_mask.to(self.device),
         )
+        assert not self.embeddings_staled
         retrieved_premises, scores = self.corpus.get_nearest_premises(
             self.corpus_embeddings, [ctx], context_emb, k
         )

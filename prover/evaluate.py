@@ -1,17 +1,23 @@
-import os
 import pdb
 import json
 import torch
 import random
 import pickle
 import argparse
-from loguru import logger
 from pathlib import Path
+from loguru import logger
+from lean_dojo import Theorem
 from typing import List, Tuple
 from lean_dojo import LeanGitRepo, Theorem, Pos
 from prover.search import Status, DistributedProver
-from lean_dojo import Theorem
-from generator.model import TransformerTacticGenerator, RetrivalAugmentedTacticGenerator
+
+
+from common import set_logger
+from generator.model import (
+    TransformerTacticGenerator,
+    RetrivalAugmentedTacticGenerator,
+    GPT4TacticGenerator,
+)
 
 
 def get_theorems(args) -> Tuple[List[Theorem], List[Pos]]:
@@ -53,19 +59,21 @@ def main() -> None:
     parser.add_argument(
         "--model",
         type=str,
-        choices=["TransformerTacticGenerator", "RetrivalAugmentedTacticGenerator"],
+        choices=[
+            "TransformerTacticGenerator",
+            "RetrivalAugmentedTacticGenerator",
+            "GPT4TacticGenerator",
+        ],
         default="TransformerTacticGenerator",
     )
     parser.add_argument(
         "--gen-ckpt-path",
         type=str,
-        required=True,
         help="Checkpoint of the tactic generator.",
     )
     parser.add_argument(
         "--ret-ckpt-path",
         type=str,
-        required=True,
         help="Checkpoint of the premise retriever.",
     )
     parser.add_argument(
@@ -89,26 +97,33 @@ def main() -> None:
         help="Maximum number of expansions in Best First Search (Default: 512).",
     )
     parser.add_argument("--num-cpus", type=int, default=1)
+    parser.add_argument("--use-gpu", action="store_true")
     parser.add_argument(
         "--verbose", action="store_true", help="Set the logging level to DEBUG."
     )
     args = parser.parse_args()
 
+    set_logger(args.verbose)
     logger.info(args)
 
     theorems, positions = get_theorems(args)
-    # device = torch.device("cpu")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if args.use_gpu:
+        assert torch.cuda.is_available()
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
 
     if args.model == "TransformerTacticGenerator":
         tac_gen = TransformerTacticGenerator.load(
             args.gen_ckpt_path, device, freeze=True
         )
-    else:
-        assert args.model == "RetrivalAugmentedTacticGenerator"
+    elif args.model == "RetrivalAugmentedTacticGenerator":
         tac_gen = RetrivalAugmentedTacticGenerator(
             args.gen_ckpt_path, args.ret_ckpt_path, device
         )
+    else:
+        assert args.model == "GPT4TacticGenerator"
+        tac_gen = GPT4TacticGenerator()
 
     prover = DistributedProver(
         num_cpus=args.num_cpus,

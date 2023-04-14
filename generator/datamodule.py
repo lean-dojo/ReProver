@@ -53,8 +53,10 @@ class GeneratorDataset(Dataset):
         ex = deepcopy(self.data[idx])
         # For training, we randomly remove the mark with probability p_remove_mark.
         # For evaluation, we always remove the mark.
-        p_remove_mark = self.p_remove_mark if self.is_train else 1.0
-        ex["tactic"] = format_tactic(ex["tactic"], p_remove_mark)
+        # p_remove_mark = self.p_remove_mark if self.is_train else 1.0
+        p_remove_mark = 0.0
+        # ex["tactic"] = format_tactic(ex["tactic"], p_remove_mark)
+        ex["tactic"] = ex["tactic"][0]
         return ex
 
     def collate(self, examples: List[Example]) -> Batch:

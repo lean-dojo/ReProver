@@ -1,4 +1,5 @@
 import re
+import sys
 import json
 import torch
 import random
@@ -49,16 +50,6 @@ def is_well_formed(s: str) -> bool:
         MARK_START_SYMBOL in m.group() or MARK_END_SYMBOL in m.group()
         for m in find_marks(s, include_symbols=False)
     )
-
-
-def find_open_mark(s: str) -> Optional[str]:
-    """Check if ``s`` has an open :code:`<a>` that is not closed by :code:`</a>`.
-    If so, return the substring from the open :code:`<a>` to the end of ``s``."""
-    assert is_well_formed(s)
-    if s.count(MARK_START_SYMBOL) > s.count(MARK_END_SYMBOL):
-        return s[s.rfind(MARK_START_SYMBOL) + len(MARK_START_SYMBOL) :]
-    else:
-        return None
 
 
 def to_path(p: Union[str, Path]) -> Path:
@@ -439,3 +430,16 @@ def load_checkpoint(model_cls, ckpt_path: Path, device, freeze: bool):
 def zip_strict(*args):
     assert len(args) > 1 and all(len(args[0]) == len(a) for a in args[1:])
     return zip(*args)
+
+
+def set_logger(verbose: bool) -> None:
+    """
+    Set the logging level of loguru.
+    The effect of this function is global, and it should
+    be called only once in the main function
+    """
+    logger.remove()
+    if verbose:
+        logger.add(sys.stderr, level="DEBUG")
+    else:
+        logger.add(sys.stderr, level="INFO")
