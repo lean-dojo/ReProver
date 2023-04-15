@@ -44,5 +44,4 @@ data:
   batch_size: 32
   eval_batch_size: 64
   max_seq_len: 1024
-  p_remove_mark: 0.5
   num_workers: 8

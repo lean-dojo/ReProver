@@ -1,4 +1,5 @@
 import re
+import sys
 import json
 import torch
 import random
@@ -44,6 +45,13 @@ def remove_marks(s: str) -> str:
     return s.replace(MARK_START_SYMBOL, "").replace(MARK_END_SYMBOL, "")
 
 
+def is_well_formed(s: str) -> bool:
+    return 0 <= s.count(MARK_START_SYMBOL) - s.count(MARK_END_SYMBOL) <= 1 and not any(
+        MARK_START_SYMBOL in m.group() or MARK_END_SYMBOL in m.group()
+        for m in find_marks(s, include_symbols=False)
+    )
+
+
 def to_path(p: Union[str, Path]) -> Path:
     """Convert ``p`` to a :class:`Path` object."""
     if isinstance(p, Path):
@@ -61,6 +69,18 @@ class Context:
     theorem_pos: Pos
     tactic_prefix: str
     state: str
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.path, Path)
+        assert isinstance(self.theorem_full_name, str)
+        assert isinstance(self.theorem_pos, Pos)
+        assert isinstance(self.tactic_prefix, str)
+        assert (
+            isinstance(self.state, str)
+            and "⊢" in self.state
+            and MARK_START_SYMBOL not in self.state
+            and MARK_END_SYMBOL not in self.state
+        )
 
     def serialize(self) -> str:
         """Serialize the context into a string for Transformers."""
@@ -91,6 +111,16 @@ class Premise:
     code: str = field(compare=False)
     """Raw, human-written code for defining the premise.
     """
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.path, Path)
+        assert isinstance(self.full_name, str)
+        assert (
+            isinstance(self.start, Pos)
+            and isinstance(self.end, Pos)
+            and self.start <= self.end
+        )
+        assert isinstance(self.code, str)
 
     def serialize(self) -> str:
         """Serialize the premise into a string for Transformers."""
@@ -148,10 +178,6 @@ class Corpus:
     """All premises in the entire corpus.
     """
 
-    premise_embeddings: Optional[torch.Tensor] = None
-    """Vector embeddings of all premises produced by some machine learning model.
-    """
-
     def __init__(self, jsonl_path: Union[str, Path]) -> None:
         """Construct a :class:`Corpus` object from a ``corpus.jsonl`` data file."""
         jsonl_path = to_path(jsonl_path)
@@ -182,13 +208,12 @@ class Corpus:
     def _get_file(self, path: Path) -> File:
         return self.transitive_dep_graph.nodes[path]["file"]
 
+    def __len__(self) -> int:
+        return len(self.all_premises)
+
     @property
     def files(self) -> List[File]:
         return [self._get_file(p) for p in self.transitive_dep_graph.dep_graph.nodes]
-
-    @property
-    def has_embeddings(self) -> bool:
-        return self.premise_embeddings is not None
 
     def get_dependencies(self, path: Union[str, Path]) -> List[Path]:
         """Return a list of (direct and indirect) dependencies of the file ``path``."""
@@ -249,6 +274,7 @@ class Corpus:
 
     def get_nearest_premises(
         self,
+        premise_embeddings: torch.FloatTensor,
         batch_context: List[Context],
         batch_context_emb: torch.Tensor,
         k: int,
@@ -264,8 +290,7 @@ class Corpus:
         Returns:
             Tuple[List[List[str]], List[List[float]]]: _description_
         """
-        assert self.has_embeddings
-        similarities = batch_context_emb @ self.premise_embeddings.t()
+        similarities = batch_context_emb @ premise_embeddings.t()
         idxs_batch = similarities.argsort(dim=1, descending=True).tolist()
         assert len(batch_context) == len(idxs_batch)
         results = [[] for _ in batch_context]
@@ -288,16 +313,6 @@ class Corpus:
 
         return results, scores
 
-    def update_embeddings(self, encoder) -> None:
-        self.premise_embeddings = encoder(self.all_premises)
-
-    def to(self, device):
-        if self.has_embeddings:
-            self.premise_embeddings = self.premise_embeddings.to(device)
-
-    def cpu(self):
-        self.premise_embeddings = self.premise_embeddings.cpu()
-
 
 _SPACES_REGEX = re.compile(r"\s+", re.DOTALL)
 
@@ -307,30 +322,21 @@ def normalize_spaces(s: str) -> str:
     return _SPACES_REGEX.sub(" ", s).strip()
 
 
-def format_tactic(annotated_tactic, p: float) -> str:
-    """Sample a variant of the annotated tactic ``annotated_tactic`` by removing
-    each <a></a> with probability ``p`` and using full names for the remaining <a></a>.
-    """
-    annot_tac, provenances = annotated_tactic
+def format_tactic(annot_tac: str, provenances) -> str:
+    """USE full names for the all <a>...</a>."""
     annot_tac = normalize_spaces(annot_tac)
     if len(provenances) == 0:
         return annot_tac
 
-    variant = ""
+    tac = ""
     marks = list(re.finditer(r"<a>(?P<ident>.+?)</a>", annot_tac))
-    assert len(marks) == len(provenances)
 
-    for i, (m, prov) in enumerate(zip(marks, provenances)):
+    for i, (m, prov) in enumerate(zip_strict(marks, provenances)):
         last_end = marks[i - 1].end() if i > 0 else 0
-        if random.random() <= p:  # Remove <a></a>.
-            variant += annot_tac[last_end : m.start()] + m["ident"]
-        else:  # Keep <a></a> but use full name.
-            variant += (
-                annot_tac[last_end : m.start()] + "<a>" + prov["full_name"] + "</a>"
-            )
+        tac += annot_tac[last_end : m.start()] + "<a>" + prov["full_name"] + "</a>"
 
-    variant += annot_tac[marks[-1].end() :]
-    return variant
+    tac += annot_tac[marks[-1].end() :]
+    return tac
 
 
 def format_state(s: str) -> str:
@@ -405,7 +411,8 @@ def load_checkpoint(model_cls, ckpt_path: Path, device, freeze: bool):
         with tempfile.TemporaryDirectory() as dirname:
             path = Path(dirname) / "lightning.cpkt"
             convert_zero_checkpoint_to_fp32_state_dict(ckpt_path, path)
-            model = model_cls.load_from_checkpoint(path, strict=False).to(device)
+            model = model_cls.load_from_checkpoint(path, strict=False)
+            model = model.to(device)
     if freeze:
         model.freeze()
     return model
@@ -414,3 +421,16 @@ def load_checkpoint(model_cls, ckpt_path: Path, device, freeze: bool):
 def zip_strict(*args):
     assert len(args) > 1 and all(len(args[0]) == len(a) for a in args[1:])
     return zip(*args)
+
+
+def set_logger(verbose: bool) -> None:
+    """
+    Set the logging level of loguru.
+    The effect of this function is global, and it should
+    be called only once in the main function
+    """
+    logger.remove()
+    if verbose:
+        logger.add(sys.stderr, level="DEBUG")
+    else:
+        logger.add(sys.stderr, level="INFO")

@@ -1,9 +1,11 @@
+import pdb
 import math
 import ray
 import time
 import heapq
 import torch
 import graphviz
+import itertools
 from enum import Enum
 from lean_dojo import (
     Pos,
@@ -537,11 +539,11 @@ class BestFirstSearchProver(Prover):
         initial_sec = time.monotonic()
 
         while True:
-            try:
-                self._step()
-            except IndexError:
+            if len(self.priority_queue) == 0:
                 logger.info("Ran out of nodes to search.")
                 break
+
+            self._step()
 
             if self.root.status == Status.FAILED:
                 logger.info("Failed early!")
@@ -573,9 +575,8 @@ class BestFirstSearchProver(Prover):
         a new node for each valid result.
         """
         # Search the node with highest priority (lowest negative priority).
-        # Raises IndexError if we've run out of nodes to search.
         search_node = heapq.heappop(self.priority_queue)
-        # logger.debug(f"Expanding node: {search_node}")
+        logger.debug(f"Expanding node: {search_node}")
 
         if self.debug:
             assert all(
@@ -612,20 +613,44 @@ class BestFirstSearchProver(Prover):
 
     def _generate_tactics(self, ts: str) -> List[Tuple[str, float]]:
         t0 = time.monotonic()
-        suggestions = self.tac_gen.generate(
-            state=ts,
-            file_path=Path(self.theorem.repo.name) / self.theorem.file_path,
-            theorem_full_name=self.theorem.full_name,
-            theorem_pos=self.posision,
-            num_samples=self.num_sampled_tactics,
-        )
+
+        num_goals = ts.count("⊢")
+        assert num_goals >= 1
+        if num_goals == 1:
+            suggestions = self.tac_gen.generate(
+                state=ts,
+                file_path=Path(self.theorem.repo.name) / self.theorem.file_path,
+                theorem_full_name=self.theorem.full_name,
+                theorem_pos=self.posision,
+                num_samples=self.num_sampled_tactics,
+            )
+        else:
+            first_goal = ts.split("\n\n")[0]
+            all_suggestions = self.tac_gen.batch_generate(
+                state=[ts, first_goal],
+                file_path=Path(self.theorem.repo.name) / self.theorem.file_path,
+                theorem_full_name=self.theorem.full_name,
+                theorem_pos=self.posision,
+                num_samples=self.num_sampled_tactics,
+            )
+            suggestions = {}
+            for t, s in itertools.chain.from_iterable(all_suggestions):
+                if t not in suggestions or suggestions[t] < s:
+                    suggestions[t] = s
+            suggestions = sorted(suggestions.items(), key=lambda x: x[1], reverse=True)[
+                : self.num_sampled_tactics
+            ]
+
         elapsed = time.monotonic() - t0
         self.actor_time += elapsed
+
+        logger.debug(f"Tactic suggestions: {suggestions}")
+        # TODO: Too many repetitions.
         return suggestions
 
     def _run_tactic(self, node: InternalNode, tactic: str, logprob: float) -> Edge:
         # Must separately record time here, because caching might return a higher time
-        # logger.debug(f"Trying a tactic: {tactic}")
+        logger.debug(f"Trying a tactic: {tactic}")
         # if tactic.startswith("{"):
         #    assert node.state.num_goals > 1
         t0 = time.monotonic()

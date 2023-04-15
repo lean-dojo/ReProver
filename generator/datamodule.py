@@ -2,11 +2,9 @@ import pdb
 import json
 from tqdm import tqdm
 from pathlib import Path
-from copy import deepcopy
 from loguru import logger
 import pytorch_lightning as pl
-from typing import Optional, Union
-from typing import List
+from typing import Optional, Union, List
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer, ByT5Tokenizer
 from common import format_state, format_tactic, to_path, Example, Batch
@@ -17,13 +15,11 @@ class GeneratorDataset(Dataset):
         self,
         data_path: Path,
         max_seq_len: int,
-        p_remove_mark: float,
         tokenizer: ByT5Tokenizer,
         is_train: bool,
     ) -> None:
         super().__init__()
         self.max_seq_len = max_seq_len
-        self.p_remove_mark = p_remove_mark
         self.tokenizer = tokenizer
         self.is_train = is_train
         self.data = self._load_data(data_path)
@@ -32,30 +28,25 @@ class GeneratorDataset(Dataset):
         data = []
         for thm in tqdm(json.load(data_path.open())):
             for tac in thm["traced_tactics"]:
-                self.data.append(
+                data.append(
                     {
                         "url": thm["url"],
                         "commit": thm["commit"],
                         "file_path": thm["file_path"],
                         "full_name": thm["full_name"],
                         "state": format_state(tac["state_before"]),
-                        "tactic": tac["annotated_tactic"],
+                        "tactic": format_tactic(*tac["annotated_tactic"]),
                     }
                 )
 
-        logger.info(f"{len(self.data)} examples loaded")
+        logger.info(f"{len(data)} examples loaded")
         return data
 
     def __len__(self) -> int:
         return len(self.data)
 
     def __getitem__(self, idx: int) -> Example:
-        ex = deepcopy(self.data[idx])
-        # For training, we randomly remove the mark with probability p_remove_mark.
-        # For evaluation, we always remove the mark.
-        p_remove_mark = self.p_remove_mark if self.is_train else 1.0
-        ex["tactic"] = format_tactic(ex["tactic"], p_remove_mark)
-        return ex
+        return self.data[idx]
 
     def collate(self, examples: List[Example]) -> Batch:
         state = [ex["state"] for ex in examples]
@@ -101,14 +92,12 @@ class GeneratorDataModule(pl.LightningDataModule):
         model_name: str,
         batch_size: int,
         max_seq_len: int,
-        p_remove_mark: float,
         num_workers: int,
     ) -> None:
         super().__init__()
         self.data_path = to_path(data_path)
         self.batch_size = batch_size
         self.max_seq_len = max_seq_len
-        self.p_remove_mark = p_remove_mark
         self.num_workers = num_workers
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -120,7 +109,6 @@ class GeneratorDataModule(pl.LightningDataModule):
             self.ds_train = GeneratorDataset(
                 self.data_path / "train.json",
                 self.max_seq_len,
-                self.p_remove_mark,
                 self.tokenizer,
                 is_train=True,
             )
@@ -129,7 +117,6 @@ class GeneratorDataModule(pl.LightningDataModule):
             self.ds_val = GeneratorDataset(
                 self.data_path / "val.json",
                 self.max_seq_len,
-                self.p_remove_mark,
                 self.tokenizer,
                 is_train=False,
             )
@@ -163,7 +150,6 @@ if __name__ == "__main__":
         model_name="google/byt5-small",
         batch_size=8,
         max_seq_len=1024,
-        p_remove_mark=0.5,
         num_workers=0,
     )
     dm.prepare_data()

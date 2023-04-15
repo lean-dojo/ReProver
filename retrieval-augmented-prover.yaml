@@ -21,3 +21,4 @@ dependencies:
     - transformers
     - datasets
     - tensorboard
+    - openai

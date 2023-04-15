@@ -7,7 +7,9 @@
 * Append the root of this repo to the `PYTHONPATH` environment variable.
 * Download [the dataset](https://drive.google.com/file/d/1ogklwRbaVdXaD9asigc3qh6eD8kfF5S6/view?usp=share_link) and unzip it as `./data/lean_bench`
 
-## Training and Validation
+## Retrieval
+
+### Training and Validation
 
 We use [Lightning CLI](https://pytorch-lightning.readthedocs.io/en/1.6.5/common/lightning_cli.html) to handle the flags of the training script. For details, run:
 ```bash
@@ -33,3 +35,9 @@ Some CLI flags that may be useful:
 Caveats:
 * You may use a different pretrained model via `--model.model_name`. Currently, we use `google/by-t5` because they are tokenization-free. For other models, the gap in tokenization may become a problem.
 * We use `--trainer.precision: bf16` because [fp16 doesn't work well with pretrained T5](https://github.com/huggingface/transformers/issues/10830).
+
+
+## Evaluation
+
+```
+```
