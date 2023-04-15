@@ -1,4 +1,3 @@
-import re
 import pdb
 import json
 import torch
@@ -34,7 +33,6 @@ class RetrievalDataset(Dataset):
         corpus: Corpus,
         num_negatives: int,
         max_seq_len: int,
-        p_remove_mark: float,
         tokenizer: ByT5Tokenizer,
         is_train: bool,
     ) -> None:
@@ -42,7 +40,6 @@ class RetrievalDataset(Dataset):
         self.corpus = corpus
         self.num_negatives = num_negatives
         self.max_seq_len = max_seq_len
-        self.p_remove_mark = p_remove_mark
         self.tokenizer = tokenizer
         self.is_train = is_train
         self.data = self._load_data(data_path)
@@ -71,7 +68,9 @@ class RetrievalDataset(Dataset):
                         # Discard invalid premises.
                         num_discarded += 1
                     else:
-                        tactic_prefix = annot_tac[: m.start()]
+                        tactic_prefix = format_tactic(
+                            annot_tac[: m.start()], provenances[:i]
+                        )
                         state = format_state(tac["state_before"])
                         context = Context(
                             file_path,
@@ -83,7 +82,6 @@ class RetrievalDataset(Dataset):
                         data.append(
                             {
                                 "context": context,
-                                "provenances": provenances[:i],
                                 "pos_premise": pos_premise,
                             }
                         )
@@ -98,27 +96,19 @@ class RetrievalDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx: int) -> Example:
-        ex = deepcopy(self.data[idx])
-        if MARK_START_SYMBOL in ex["context"].tactic_prefix:
-            # For training, we randomly remove the mark with probability p_remove_mark.
-            # For evaluation, we always remove the mark.
-            p_remove_mark = self.p_remove_mark if self.is_train else 1.0
-            ex["context"].tactic_prefix = format_tactic(
-                (ex["context"].tactic_prefix, ex["provenances"]),
-                p_remove_mark,
-            )
+        if not self.is_train:
+            return self.data[idx]
 
         # Sample negative premises from all accessible premises.
-        if self.is_train:
-            premises = [
-                p
-                for p in self.corpus.iter_accessible_premises(
-                    ex["context"].path, ex["context"].theorem_pos
-                )
-                if p != ex["pos_premise"]
-            ]
-            ex["neg_premises"] = random.sample(premises, self.num_negatives)
-
+        ex = deepcopy(self.data[idx])
+        premises = [
+            p
+            for p in self.corpus.iter_accessible_premises(
+                ex["context"].path, ex["context"].theorem_pos
+            )
+            if p != ex["pos_premise"]
+        ]
+        ex["neg_premises"] = random.sample(premises, self.num_negatives)
         return ex
 
     def collate(self, examples: List[Example]) -> Batch:
@@ -204,7 +194,6 @@ class RetrievalDataModule(pl.LightningDataModule):
         batch_size: int,
         eval_batch_size: int,
         max_seq_len: int,
-        p_remove_mark: float,
         num_workers: int,
     ) -> None:
         super().__init__()
@@ -213,7 +202,6 @@ class RetrievalDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.eval_batch_size = eval_batch_size
         self.max_seq_len = max_seq_len
-        self.p_remove_mark = p_remove_mark
         self.num_workers = num_workers
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -229,7 +217,6 @@ class RetrievalDataModule(pl.LightningDataModule):
                 self.corpus,
                 self.num_negatives,
                 self.max_seq_len,
-                self.p_remove_mark,
                 self.tokenizer,
                 is_train=True,
             )
@@ -240,7 +227,6 @@ class RetrievalDataModule(pl.LightningDataModule):
                 self.corpus,
                 self.num_negatives,
                 self.max_seq_len,
-                self.p_remove_mark,
                 self.tokenizer,
                 is_train=False,
             )
@@ -276,7 +262,6 @@ if __name__ == "__main__":
         model_name="google/byt5-small",
         batch_size=8,
         max_seq_len=1024,
-        p_remove_mark=0.5,
         num_workers=8,
     )
     dm.prepare_data()

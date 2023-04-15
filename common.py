@@ -322,30 +322,21 @@ def normalize_spaces(s: str) -> str:
     return _SPACES_REGEX.sub(" ", s).strip()
 
 
-def format_tactic(annotated_tactic, p: float) -> str:
-    """Sample a variant of the annotated tactic ``annotated_tactic`` by removing
-    each <a></a> with probability ``p`` and using full names for the remaining <a></a>.
-    """
-    annot_tac, provenances = annotated_tactic
+def format_tactic(annot_tac: str, provenances) -> str:
+    """USE full names for the all <a>...</a>."""
     annot_tac = normalize_spaces(annot_tac)
     if len(provenances) == 0:
         return annot_tac
 
-    variant = ""
+    tac = ""
     marks = list(re.finditer(r"<a>(?P<ident>.+?)</a>", annot_tac))
-    assert len(marks) == len(provenances)
 
-    for i, (m, prov) in enumerate(zip(marks, provenances)):
+    for i, (m, prov) in enumerate(zip_strict(marks, provenances)):
         last_end = marks[i - 1].end() if i > 0 else 0
-        if random.random() <= p:  # Remove <a></a>.
-            variant += annot_tac[last_end : m.start()] + m["ident"]
-        else:  # Keep <a></a> but use full name.
-            variant += (
-                annot_tac[last_end : m.start()] + "<a>" + prov["full_name"] + "</a>"
-            )
+        tac += annot_tac[last_end : m.start()] + "<a>" + prov["full_name"] + "</a>"
 
-    variant += annot_tac[marks[-1].end() :]
-    return variant
+    tac += annot_tac[marks[-1].end() :]
+    return tac
 
 
 def format_state(s: str) -> str:

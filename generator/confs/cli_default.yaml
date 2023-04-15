@@ -42,5 +42,4 @@ data:
   data_path: data/lean_bench/random/
   batch_size: 16  # effective_batch_size == batch_size * accumulate_grad_batches * devices
   max_seq_len: 1024
-  p_remove_mark: 0.5
   num_workers: 8
