@@ -197,13 +197,14 @@ class PremiseRetriever(pl.LightningModule):
                     }
                 )
 
-        path = (
-            Path(self.trainer.log_dir)
-            / f"epoch{self.current_epoch}_validation_outputs.pickle"
-        )
-        with path.open("wb") as oup:
-            pickle.dump(outputs, oup)
-        logger.info(f"Validation outputs saved to {path}")
+        if self.logger is not None:
+            path = (
+                Path(self.trainer.log_dir)
+                / f"epoch{self.current_epoch}_validation_outputs.pickle"
+            )
+            with path.open("wb") as oup:
+                pickle.dump(outputs, oup)
+            logger.info(f"Validation outputs saved to {path}")
 
         self.validation_step_outputs.clear()
 
