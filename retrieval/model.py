@@ -197,7 +197,7 @@ class PremiseRetriever(pl.LightningModule):
                     }
                 )
 
-        if self.logger is not None:
+        if self.trainer.log_dir is not None:
             path = (
                 Path(self.trainer.log_dir)
                 / f"epoch{self.current_epoch}_validation_outputs.pickle"
