@@ -15,6 +15,7 @@ from lean_dojo import (
     TacticError,
     IncompleteSolve1,
     ProofFinished,
+    ProofGivenUp,
     DojoInitError,
     DojoCrashError,
 )
@@ -670,9 +671,7 @@ class BestFirstSearchProver(Prover):
             # Build a new node
             if isinstance(response, ProofFinished):
                 result_node = ProofFinishedNode(response)
-            elif isinstance(response, TacticError) or isinstance(
-                response, IncompleteSolve1
-            ):
+            elif type(response) in (TacticError, IncompleteSolve1, ProofGivenUp):
                 result_node = ErrorNode(response)
             else:
                 assert isinstance(response, TacticState)
