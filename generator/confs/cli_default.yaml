@@ -10,7 +10,7 @@ trainer:
       offload_optimizer: false
       cpu_checkpointing: false
   gradient_clip_val: 1.0
-  max_steps: 250000
+  max_steps: 300000
   accumulate_grad_batches: 2
   check_val_every_n_epoch: 5
   callbacks:

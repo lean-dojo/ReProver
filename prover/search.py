@@ -1,4 +1,5 @@
 import pdb
+import signal
 import math
 import ray
 import time
@@ -724,9 +725,7 @@ class BestFirstSearchProver(Prover):
                 assert isinstance(node, ProofFinishedNode)
                 assert node not in self.priority_queue
                 assert self.root.status == Status.PROVED
-            elif isinstance(response, TacticError) or isinstance(
-                response, IncompleteSolve1
-            ):
+            elif type(response) in (TacticError, IncompleteSolve1, ProofGivenUp):
                 assert isinstance(node, ErrorNode)
                 assert node not in self.priority_queue
             else:
@@ -805,16 +804,29 @@ class DistributedProver:
                 debug=debug,
             )
 
+    """
+    def _exit_gracefully(self, signum, frame):
+        ray.shutdown()
+        if signum == signal.SIGINT:
+            self.old_sigint(signum, frame)
+        elif signum == signal.SIGTERM:
+            self.old_sigterm(signum, frame)
+    """
+
     def search_unordered(
         self, theorems: List[Theorem], positions: List[Pos]
     ) -> List[SearchResult]:
         if self.distributed:
+            # self.old_sigint = signal.signal(signal.SIGINT, self._exit_gracefully)
+            # self.old_sigterm = signal.signal(signal.SIGTERM, self._exit_gracefully)
             results = list(
                 self.prover_pool.map_unordered(
                     lambda p, x: p.search.remote(x[0], x[1]),
                     zip_strict(theorems, positions),
                 )
             )
+            # signal.signal(signal.SIGINT, self.old_sigint)
+            # signal.signal(signal.SIGTERM, self.old_sigterm)
         else:
             results = [
                 self.prover.search(t, pos) for t, pos in zip_strict(theorems, positions)
