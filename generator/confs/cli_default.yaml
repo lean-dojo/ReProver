@@ -21,7 +21,7 @@ trainer:
       init_args:
         verbose: true
         save_last: true
-        save_top_k: 1
+        save_top_k: 3
         monitor: val_top1_acc
         auto_insert_metric_name: true
         mode: max
