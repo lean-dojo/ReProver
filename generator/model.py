@@ -422,99 +422,8 @@ class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
         self.premise_scores = [copy(self.premise_scores[i]) for i in next_beam_indices]
 
 
-class BeamSearchHelper:
-    def __init__(
-        self,
-        state: str,
-        file_path: Path,
-        theorem_full_name: str,
-        theorem_pos: Pos,
-        tokenizer: ByT5Tokenizer,
-        retriever,
-        num_beams,
-        device,
-        max_length,
-    ) -> None:
-        self.logits_processor = RetrievalAugmentedLogitsProcessor(
-            state,
-            file_path,
-            theorem_full_name,
-            theorem_pos,
-            tokenizer,
-            retriever,
-            num_beams,
-        )
-
-        self.beam_scorer = BeamSearchScorer(
-            batch_size=1,
-            num_beams=num_beams,
-            device=device,
-            do_early_stopping=False,
-            num_beam_hyps_to_keep=num_beams,
-            max_length=max_length,
-        )
-
-    @property
-    def _beam_hyps(self):
-        return self.beam_scorer._beam_hyps
-
-    @property
-    def num_beams(self):
-        return self.beam_scorer.num_beams
-
-    @property
-    def is_done(self):
-        return self.beam_scorer.is_done
-
-    def __call__(
-        self, input_ids: torch.LongTensor, scores: torch.FloatTensor
-    ) -> torch.FloatTensor:
-        return self.logits_processor(input_ids, scores)
-
-    def process(
-        self,
-        input_ids: torch.LongTensor,
-        next_scores: torch.FloatTensor,
-        next_tokens: torch.LongTensor,
-        next_indices: torch.LongTensor,
-        pad_token_id: Optional[int] = None,
-        eos_token_id: Optional[Union[int, List[int]]] = None,
-        beam_indices: Optional[torch.LongTensor] = None,
-    ) -> Tuple[torch.Tensor]:
-        result = self.beam_scorer.process(
-            input_ids,
-            next_scores,
-            next_tokens,
-            next_indices,
-            pad_token_id,
-            eos_token_id,
-            beam_indices,
-        )
-        self.logits_processor.process(result["next_beam_indices"].tolist())
-        return result
-
-    def finalize(
-        self,
-        input_ids: torch.LongTensor,
-        final_beam_scores: torch.FloatTensor,
-        final_beam_tokens: torch.LongTensor,
-        final_beam_indices: torch.LongTensor,
-        max_length: int,
-        pad_token_id: Optional[int] = None,
-        eos_token_id: Optional[Union[int, List[int]]] = None,
-        beam_indices: Optional[torch.LongTensor] = None,
-    ) -> Tuple[torch.LongTensor]:
-        logger.debug(f"time_retrieval: {self.logits_processor.time_retrieval}")
-        return self.beam_scorer.finalize(
-            input_ids,
-            final_beam_scores,
-            final_beam_tokens,
-            final_beam_indices,
-            max_length,
-            pad_token_id,
-            eos_token_id,
-            beam_indices,
-        )
+# self.logits_processor.process(result["next_beam_indices"].tolist())
+# return result
 
 
 class RetrivalAugmentedTacticGenerator(TacticGenerator):
@@ -581,6 +490,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             max_length=self.generator.max_seq_len,
         )
         logger.debug(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
+        pdb.set_trace()
 
         """
         if len(state) > 1:
