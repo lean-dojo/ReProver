@@ -2,6 +2,7 @@ import pdb
 import openai
 import math
 import torch
+import itertools
 from time import monotonic
 from copy import copy
 from pathlib import Path
@@ -23,7 +24,7 @@ from torchmetrics import Metric
 from collections import defaultdict
 from abc import ABC, abstractmethod
 from retrieval.model import PremiseRetriever
-from transformers.generation import BeamHypotheses, BeamSearchEncoderDecoderOutput
+from transformers.generation import BeamHypotheses
 from typing import List, Dict, Any, Optional, Tuple, Union
 
 
@@ -421,99 +422,8 @@ class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
         self.premise_scores = [copy(self.premise_scores[i]) for i in next_beam_indices]
 
 
-class BeamSearchHelper:
-    def __init__(
-        self,
-        state: str,
-        file_path: Path,
-        theorem_full_name: str,
-        theorem_pos: Pos,
-        tokenizer: ByT5Tokenizer,
-        retriever,
-        num_beams,
-        device,
-        max_length,
-    ) -> None:
-        self.logits_processor = RetrievalAugmentedLogitsProcessor(
-            state,
-            file_path,
-            theorem_full_name,
-            theorem_pos,
-            tokenizer,
-            retriever,
-            num_beams,
-        )
-
-        self.beam_scorer = BeamSearchScorer(
-            batch_size=1,
-            num_beams=num_beams,
-            device=device,
-            do_early_stopping=False,
-            num_beam_hyps_to_keep=num_beams,
-            max_length=max_length,
-        )
-
-    @property
-    def _beam_hyps(self):
-        return self.beam_scorer._beam_hyps
-
-    @property
-    def num_beams(self):
-        return self.beam_scorer.num_beams
-
-    @property
-    def is_done(self):
-        return self.beam_scorer.is_done
-
-    def __call__(
-        self, input_ids: torch.LongTensor, scores: torch.FloatTensor
-    ) -> torch.FloatTensor:
-        return self.logits_processor(input_ids, scores)
-
-    def process(
-        self,
-        input_ids: torch.LongTensor,
-        next_scores: torch.FloatTensor,
-        next_tokens: torch.LongTensor,
-        next_indices: torch.LongTensor,
-        pad_token_id: Optional[int] = None,
-        eos_token_id: Optional[Union[int, List[int]]] = None,
-        beam_indices: Optional[torch.LongTensor] = None,
-    ) -> Tuple[torch.Tensor]:
-        result = self.beam_scorer.process(
-            input_ids,
-            next_scores,
-            next_tokens,
-            next_indices,
-            pad_token_id,
-            eos_token_id,
-            beam_indices,
-        )
-        self.logits_processor.process(result["next_beam_indices"].tolist())
-        return result
-
-    def finalize(
-        self,
-        input_ids: torch.LongTensor,
-        final_beam_scores: torch.FloatTensor,
-        final_beam_tokens: torch.LongTensor,
-        final_beam_indices: torch.LongTensor,
-        max_length: int,
-        pad_token_id: Optional[int] = None,
-        eos_token_id: Optional[Union[int, List[int]]] = None,
-        beam_indices: Optional[torch.LongTensor] = None,
-    ) -> Tuple[torch.LongTensor]:
-        logger.debug(f"time_retrieval: {self.logits_processor.time_retrieval}")
-        return self.beam_scorer.finalize(
-            input_ids,
-            final_beam_scores,
-            final_beam_tokens,
-            final_beam_indices,
-            max_length,
-            pad_token_id,
-            eos_token_id,
-            beam_indices,
-        )
+# self.logits_processor.process(result["next_beam_indices"].tolist())
+# return result
 
 
 class RetrivalAugmentedTacticGenerator(TacticGenerator):
@@ -535,44 +445,9 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         theorem_pos: Pos,
         num_samples: int,
     ) -> List[Tuple[str, float]]:
-        logger.debug(state)
-
-        state_ids = self.generator.tokenizer(
-            state,
-            truncation=True,
-            max_length=self.generator.max_seq_len,
-            return_tensors="pt",
-        ).input_ids.to(self.generator.device)
-
-        if len(state_ids) >= self.generator.max_seq_len:
-            logger.warning(f"The tactic_state is truncated: {state}")
-
-        encoder_outputs = self.generator.t5.encoder(
-            state_ids.repeat_interleave(num_samples, dim=0)
-        )
-
-        time_start = monotonic()
-        # TODO: Make `length_penalty` a parameter.
-        sequences, scores = self.beam_search(
-            encoder_outputs,
-            num_samples,
-            length_penalty=-0.5,
-            early_stopping=False,
-            max_length=self.generator.max_seq_len,
-        )
-        logger.debug(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
-
-        # Return the output.
-        output_text = self.generator.tokenizer.batch_decode(
-            sequences, skip_special_tokens=True
-        )
-        logger.debug(f"Predicted tactics: {output_text}")
-        output_text = [remove_marks(_) for _ in output_text]
-        assert len(set(output_text)) == len(output_text)
-        assert num_samples > 1
-        tactics_with_scores = list(zip_strict(output_text, scores.tolist()))
-        # logger.debug(f"Predicted tactics: {str(tactics_with_scores)}")
-        return tactics_with_scores
+        return self.batch_generate(
+            [state], file_path, theorem_full_name, theorem_pos, num_samples
+        )[0]
 
     def batch_generate(
         self,
@@ -582,38 +457,133 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         theorem_pos: Pos,
         num_samples: int,
     ) -> List[List[Tuple[str, float]]]:
-        raise NotImplementedError
+        logger.debug(state)
+
+        tokenized_state = self.generator.tokenizer(
+            state,
+            padding="longest",
+            max_length=self.generator.max_seq_len,
+            truncation=True,
+            return_tensors="pt",
+        )
+        state_ids = tokenized_state.input_ids.to(self.generator.device)
+        state_mask = tokenized_state.attention_mask.to(
+            self.generator.device
+        ).repeat_interleave(num_samples, dim=0)
+
+        if len(state_ids) >= self.generator.max_seq_len:
+            logger.warning(f"The tactic_state is truncated: {state}")
+
+        encoder_outputs = self.generator.t5.encoder(
+            input_ids=state_ids.repeat_interleave(num_samples, dim=0),
+            attention_mask=state_mask,
+        )
+
+        time_start = monotonic()
+        # TODO: Make `length_penalty` a parameter.
+        sequences, scores = self.beam_search(
+            encoder_outputs,
+            state_mask,
+            num_samples,
+            length_penalty=-0.5,
+            early_stopping=False,
+            max_length=self.generator.max_seq_len,
+        )
+        logger.debug(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
+        pdb.set_trace()
+
+        """
+        if len(state) > 1:
+            logger.warning("DEBUG ONLY")
+            time_start = monotonic()
+            output = self.generator.t5.generate(
+                input_ids=state_ids,
+                max_length=self.generator.max_seq_len,
+                num_beams=num_samples,
+                do_sample=False,
+                num_return_sequences=num_samples,
+                early_stopping=False,
+                output_scores=True,
+                return_dict_in_generate=True,
+                length_penalty=-0.5,
+            )
+            logger.debug(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
+            pdb.set_trace()
+        """
+
+        # Return the output.
+        raw_output_text = self.generator.tokenizer.batch_decode(
+            sequences, skip_special_tokens=True
+        )
+        raw_scores = scores.tolist()
+        batch_size = len(state)
+        tactics_with_scores = []
+
+        for i in range(batch_size):
+            raw_output_text_i = raw_output_text[i * num_samples : (i + 1) * num_samples]
+            raw_scores_i = raw_scores[i * num_samples : (i + 1) * num_samples]
+            output_text = []
+            output_score = []
+            for t, s in zip_strict(raw_output_text_i, raw_scores_i):
+                t = remove_marks(t)
+                if t not in output_text:
+                    output_text.append(t)
+                    output_score.append(s)
+            tactics_with_scores.append(list(zip_strict(output_text, output_score)))
+
+        logger.debug(f"Predicted tactics: {str(tactics_with_scores)}")
+        return tactics_with_scores
 
     def beam_search(
         self,
         encoder_outputs,
+        attention_mask,
         num_beams: int,
         length_penalty: float,
         early_stopping: bool,
         max_length: int,
     ):
+        batch_beam_size = encoder_outputs.last_hidden_state.size(0)
+        batch_size = batch_beam_size // num_beams
         device = self.generator.device
-        decoder_input_ids = torch.full(
-            (num_beams, 1),
+        pad_token_id = self.generator.t5.config.pad_token_id
+        eos_token_id = self.generator.t5.config.eos_token_id
+
+        input_ids = torch.full(
+            (batch_beam_size, 1),
             fill_value=self.generator.t5.config.decoder_start_token_id,
             dtype=torch.long,
             device=device,
         )
 
-        # initialise score of first beam with 0 and the rest with -1e9. This makes sure that only tokens
+        # Initialise score of first beam with 0 and the rest with -1e9. This makes sure that only tokens
         # of the first beam are considered to avoid sampling the exact same tokens across all beams.
-        beam_scores = torch.zeros((num_beams,), dtype=torch.float, device=device)
-        beam_scores[1:] = -1e9
-
-        beam_hyps = BeamHypotheses(
-            num_beams, length_penalty, early_stopping, max_length
+        beam_scores = torch.zeros(
+            (batch_size, num_beams), dtype=torch.float, device=device
         )
+        beam_scores[:, 1:] = -1e9
+        beam_scores = beam_scores.flatten()
+
+        # TODO: How to handle retrieved idents in length penalty?
+        beam_hyps = [
+            BeamHypotheses(num_beams, length_penalty, early_stopping, max_length)
+            for _ in range(batch_size)
+        ]
+        done = [False for _ in range(batch_size)]
+        past_key_values = None
 
         while True:
+            decoder_input_ids = (
+                input_ids if past_key_values is None else input_ids[:, -1:]
+            )
             outputs = self.generator.t5(
                 decoder_input_ids=decoder_input_ids,
                 encoder_outputs=encoder_outputs,
+                attention_mask=attention_mask,
+                # decoder_attention_mas =
                 return_dict=True,
+                past_key_values=past_key_values,
+                use_cache=True,
             )
 
             next_token_scores = F.log_softmax(outputs.logits[:, -1, :], dim=-1)
@@ -624,71 +594,115 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             # Sample 2 next tokens for each beam (so we have some spare tokens and match output of beam search)
             vocab_size = next_scores.size(-1)
             next_scores, next_tokens = torch.topk(
-                next_scores.view(-1), 2 * num_beams, largest=True, sorted=True
+                next_scores.view(batch_size, -1),
+                2 * num_beams,
+                dim=1,
+                largest=True,
+                sorted=True,
             )
             next_indices = torch.div(next_tokens, vocab_size, rounding_mode="floor")
             next_tokens = next_tokens % vocab_size
 
-            beam_idx = 0
             next_beam_scores = torch.zeros(
-                (num_beams,), dtype=next_scores.dtype, device=device
+                (batch_size, num_beams), dtype=next_scores.dtype, device=device
             )
             next_beam_tokens = torch.zeros(
-                (num_beams,), dtype=next_tokens.dtype, device=device
+                (batch_size, num_beams), dtype=next_tokens.dtype, device=device
             )
             next_beam_indices = torch.zeros(
-                (num_beams,), dtype=next_indices.dtype, device=device
+                (batch_size, num_beams), dtype=next_indices.dtype, device=device
             )
 
-            for beam_token_rank, (next_token, next_score, next_index) in enumerate(
-                zip(next_tokens, next_scores, next_indices)
-            ):
-                # Add to generated hypotheses if end of sentence.
-                if next_token.item() == self.generator.t5.config.eos_token_id:
-                    if beam_token_rank >= num_beams:
-                        continue
-                    beam_hyps.add(
-                        decoder_input_ids[next_index].clone(), next_score.item()
+            for batch_idx, beam_hyp in enumerate(beam_hyps):
+                if done[batch_idx]:
+                    assert num_beams <= len(beam_hyp)
+                    # Pad the batch.
+                    next_beam_scores[batch_idx, :] = 0
+                    next_beam_tokens[batch_idx, :] = pad_token_id
+                    next_beam_indices[batch_idx, :] = 0
+                    continue
+
+                beam_idx = 0
+                for beam_token_rank, (next_token, next_score, next_index) in enumerate(
+                    zip(
+                        next_tokens[batch_idx],
+                        next_scores[batch_idx],
+                        next_indices[batch_idx],
                     )
-                else:
-                    next_beam_scores[beam_idx] = next_score
-                    next_beam_tokens[beam_idx] = next_token
-                    next_beam_indices[beam_idx] = next_index
-                    beam_idx += 1
+                ):
+                    batch_beam_idx = batch_idx * num_beams + next_index
+                    # Add to generated hypotheses if end of sentence.
+                    if next_token.item() == eos_token_id:
+                        if beam_token_rank >= num_beams:
+                            continue
+                        beam_hyp.add(
+                            input_ids[batch_beam_idx].clone(), next_score.item()
+                        )
+                    else:
+                        next_beam_scores[batch_idx, beam_idx] = next_score
+                        next_beam_tokens[batch_idx, beam_idx] = next_token
+                        next_beam_indices[batch_idx, beam_idx] = batch_beam_idx
+                        beam_idx += 1
 
-                # Once the beam for next step is full, don't add more tokens to it.
-                if beam_idx >= num_beams:
-                    break
+                    # Once the beam for next step is full, don't add more tokens to it.
+                    if beam_idx >= num_beams:
+                        break
 
-            decoder_input_ids = torch.cat(
+                done[batch_idx] = done[batch_idx] or beam_hyp.is_done(
+                    next_scores[batch_idx].max().item(), 1 + input_ids.size(-1)
+                )
+
+            next_beam_scores = next_beam_scores.flatten()
+            next_beam_tokens = next_beam_tokens.flatten()
+            next_beam_indices = next_beam_indices.flatten()
+
+            # pdb.set_trace()
+            input_ids = torch.cat(
                 [
-                    decoder_input_ids[next_beam_indices, :],
+                    input_ids[next_beam_indices, :],
                     next_beam_tokens.unsqueeze(-1),
                 ],
                 dim=-1,
             )
+            past_key_values = self.generator.t5._reorder_cache(
+                outputs.past_key_values, next_beam_indices
+            )
             beam_scores = next_beam_scores
 
-            cur_len = decoder_input_ids.size(-1)
-            if cur_len >= max_length or beam_hyps.is_done(
-                next_scores.max().item(), cur_len
-            ):
+            if input_ids.size(-1) >= max_length - 1 or all(done):
                 break
 
-        assert len(beam_hyps) == num_beams
-        final_beams = sorted(beam_hyps.beams, key=lambda x: x[0], reverse=True)
+        # Finalize all open beam hypotheses and add to generated hypotheses
+        for batch_idx, beam_hyp in enumerate(beam_hyps):
+            if done[batch_idx]:
+                continue
+            # All open beam hypotheses are added to the beam hypothesis
+            # beam hypothesis class automatically keeps the best beams.
+            for beam_id in range(num_beams):
+                batch_beam_idx = batch_idx * num_beams + beam_id
+                final_score = beam_scores[batch_beam_idx].item()
+                final_tokens = input_ids[batch_beam_idx]
+                beam_hyp.add(final_tokens, final_score)
+
+        # Select the best hypotheses.
+        final_beams = list(
+            itertools.chain.from_iterable(
+                sorted(hyp.beams, key=lambda x: x[0], reverse=True)[:num_beams]
+                for hyp in beam_hyps
+            )
+        )
+        assert len(final_beams) == batch_beam_size
         max_len = 1 + max(len(x[1]) for x in final_beams)
         sequences = torch.full(
-            (num_beams, max_len),
-            fill_value=self.generator.t5.config.pad_token_id,
+            (batch_beam_size, max_len),
+            fill_value=pad_token_id,
             dtype=torch.long,
             device=device,
         )
-        scores = torch.zeros((num_beams,), dtype=torch.float, device=device)
-
+        scores = torch.zeros((batch_beam_size,), dtype=torch.float, device=device)
         for i, (s, seq, _) in enumerate(final_beams):
             sequences[i, : len(seq)] = seq
-            sequences[i, len(seq)] = self.generator.t5.config.eos_token_id
+            sequences[i, len(seq)] = eos_token_id
             scores[i] = s
 
         return sequences, scores

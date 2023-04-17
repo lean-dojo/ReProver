@@ -101,14 +101,33 @@ class RetrievalDataset(Dataset):
 
         # Sample negative premises from all accessible premises.
         ex = deepcopy(self.data[idx])
-        premises = [
-            p
-            for p in self.corpus.iter_accessible_premises(
-                ex["context"].path, ex["context"].theorem_pos
-            )
-            if p != ex["pos_premise"]
-        ]
-        ex["neg_premises"] = random.sample(premises, self.num_negatives)
+        premises_in_path = []
+        premises_not_in_path = []
+        
+        for p in self.corpus.get_premises(ex["context"].path):
+            if p == ex["pos_premise"]:
+                continue
+            if p.end < ex["context"].theorem_pos:
+                if ex["pos_premise"].path == ex["context"].path:
+                    premises_in_path.append(p)
+                else:
+                    premises_not_in_path.append(p)
+
+        for p in self.corpus.transitive_dep_graph.successors(ex["context"].path):
+            if p == ex["pos_premise"].path:
+                premises_in_path += [
+                    _p
+                    for _p in self.corpus.get_premises(p)
+                    if _p != ex["pos_premise"]
+                ]
+            else:
+                premises_not_in_path += self.corpus.get_premises(p)
+        num_negatives_in_path = min(self.num_negatives // 2, len(premises_in_path))
+        num_negatives_out_path = self.num_negatives - num_negatives_in_path
+        ex["neg_premises"] = random.sample(
+            premises_in_path, num_negatives_in_path
+        ) + random.sample(premises_not_in_path, num_negatives_out_path)
+        
         return ex
 
     def collate(self, examples: List[Example]) -> Batch:
