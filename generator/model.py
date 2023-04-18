@@ -316,110 +316,6 @@ class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
         self.tokenizer = tokenizer
         self.retriever = retriever
         self.num_beams = num_beams
-        self.premise_names = [None for _ in range(num_beams)]
-        self.premise_scores = [None for _ in range(num_beams)]
-        self.mark_start_ids = bytes(
-            tokenizer.encode(MARK_START_SYMBOL, add_special_tokens=False)
-        )
-        self.mark_end_ids = bytes(
-            tokenizer.encode(MARK_END_SYMBOL, add_special_tokens=False)
-        )
-        self.time_retrieval = 0.0
-
-    def __call__(
-        self, input_ids: torch.LongTensor, scores: torch.FloatTensor
-    ) -> torch.FloatTensor:
-        for beam_idx in range(self.num_beams):
-            tactic_prefix = bytes(input_ids[beam_idx, 1:].tolist())
-            tactic_prefix_str = self.tokenizer.decode(tactic_prefix)
-            assert is_well_formed(tactic_prefix_str)
-
-            if self._in_generation_mode(beam_idx) and tactic_prefix.endswith(
-                self.mark_end_ids[:-1]
-            ):
-                # Prevent MARK_END_SYMBOL from being generated.
-                scores[beam_idx, self.mark_end_ids[-1]] = -float("inf")
-                scores[beam_idx] = F.log_softmax(scores[beam_idx], dim=0)
-
-            if tactic_prefix.endswith(self.mark_start_ids):
-                # TODO: Don't have to retrieve self.num_beams items.
-                # TODO: Dont' discount the beam score using premise_scores.
-                assert self._in_generation_mode(beam_idx)
-                time_start = monotonic()
-                premises, premise_scores = self.retriever.retrieve(
-                    self.state,
-                    self.file_path,
-                    self.theorem_full_name,
-                    self.theorem_pos,
-                    tactic_prefix_str,
-                    self.num_beams,
-                )
-                self.time_retrieval += monotonic() - time_start
-                premise_names = [
-                    bytes(
-                        self.tokenizer.encode(
-                            p.full_name + MARK_END_SYMBOL, add_special_tokens=False
-                        )
-                    )
-                    for p in premises
-                ]
-                self._update_retrieved_premises(beam_idx, premise_names, premise_scores)
-            elif tactic_prefix.endswith(self.mark_end_ids):
-                assert self._in_retrival_mode(beam_idx)
-                self._update_retrieved_premises(beam_idx, None, None)
-
-            name_prefix = self._find_open_mark(tactic_prefix)
-
-            if name_prefix is not None:
-                # Modify scores[i].
-                possible_suffixes = []
-                suffix_scores = []
-                for s, p in zip_strict(
-                    self.premise_names[beam_idx], self.premise_scores[beam_idx]
-                ):
-                    if s.startswith(name_prefix) and s != name_prefix:
-                        possible_suffixes.append(s[len(name_prefix) :])
-                        suffix_scores.append(p)
-                assert len(possible_suffixes) > 0
-
-                suffix_probs = torch.tensor(suffix_scores).softmax(dim=0).tolist()
-                byte_probs = defaultdict(float)
-                for s, p in zip_strict(possible_suffixes, suffix_probs):
-                    byte_probs[s[0]] += p
-
-                scores[beam_idx].fill_(-float("inf"))
-                for b_id, p in byte_probs.items():
-                    scores[beam_idx, b_id] = math.log(p)
-
-        return scores
-
-    def _find_open_mark(self, s: bytes) -> Optional[bytes]:
-        """Check if ``s`` has an open :code:`<a>` that is not closed by :code:`</a>`.
-        If so, return the substring from the open :code:`<a>` to the end of ``s``."""
-        if s.count(self.mark_start_ids) > s.count(self.mark_end_ids):
-            return s[s.rfind(self.mark_start_ids) + len(self.mark_start_ids) :]
-        else:
-            return None
-
-    def _in_generation_mode(self, beam_idx: int) -> bool:
-        return self.premise_names[beam_idx] is None
-
-    def _in_retrival_mode(self, beam_idx: int) -> bool:
-        return self.premise_names[beam_idx] is not None
-
-    def _update_retrieved_premises(
-        self,
-        beam_idx: int,
-        premise_names: Optional[List[List[int]]],
-        premise_scores: Optional[List[float]],
-    ) -> None:
-        assert (premise_names is None) == (premise_scores is None)
-        self.premise_names[beam_idx] = premise_names
-        self.premise_scores[beam_idx] = premise_scores
-
-    def process(self, next_beam_indices: List[int]) -> None:
-        self.premise_names = [copy(self.premise_names[i]) for i in next_beam_indices]
-        self.premise_scores = [copy(self.premise_scores[i]) for i in next_beam_indices]
 
 
 # self.logits_processor.process(result["next_beam_indices"].tolist())
@@ -436,6 +332,21 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         super().__init__()
         self.generator = TransformerTacticGenerator.load(gen_ckpt, device, freeze=True)
         self.retriever = PremiseRetriever.load(ret_ckpt, device, freeze=True)
+
+        assert isinstance(self.generator.tokenizer, ByT5Tokenizer)
+        num_special_tokens = self.generator.tokenizer._num_special_tokens
+        self.mark_start_ids = bytes(
+            x - num_special_tokens
+            for x in self.generator.tokenizer.encode(
+                MARK_START_SYMBOL, add_special_tokens=False
+            )
+        )
+        self.mark_end_ids = bytes(
+            x - num_special_tokens
+            for x in self.generator.tokenizer.encode(
+                MARK_END_SYMBOL, add_special_tokens=False
+            )
+        )
 
     def generate(
         self,
@@ -482,6 +393,10 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         time_start = monotonic()
         # TODO: Make `length_penalty` a parameter.
         sequences, scores = self.beam_search(
+            state,
+            file_path,
+            theorem_full_name,
+            theorem_pos,
             encoder_outputs,
             state_mask,
             num_samples,
@@ -490,7 +405,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             max_length=self.generator.max_seq_len,
         )
         logger.debug(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
-        pdb.set_trace()
 
         """
         if len(state) > 1:
@@ -532,10 +446,15 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             tactics_with_scores.append(list(zip_strict(output_text, output_score)))
 
         logger.debug(f"Predicted tactics: {str(tactics_with_scores)}")
+        # pdb.set_trace()
         return tactics_with_scores
 
     def beam_search(
         self,
+        state: List[str],
+        file_path: Path,
+        theorem_full_name: str,
+        theorem_pos: Pos,
         encoder_outputs,
         attention_mask,
         num_beams: int,
@@ -544,6 +463,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         max_length: int,
     ):
         batch_beam_size = encoder_outputs.last_hidden_state.size(0)
+        self._init_retrieved_premises(batch_beam_size)
         batch_size = batch_beam_size // num_beams
         device = self.generator.device
         pad_token_id = self.generator.t5.config.pad_token_id
@@ -587,9 +507,21 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             )
 
             next_token_scores = F.log_softmax(outputs.logits[:, -1, :], dim=-1)
-            # next_scores_processed = logits_processor(input_ids, next_scores)
+            next_scores_processed = self._process_logits(
+                state,
+                file_path,
+                theorem_full_name,
+                theorem_pos,
+                batch_size,
+                num_beams,
+                done,
+                input_ids,
+                next_token_scores,
+            )
+            # next_scores_processed = next_token_scores
+            next_scores_processed = logits_processor(input_ids, next_scores)
             # renormalize_logits=True,
-            next_scores = next_token_scores + beam_scores.unsqueeze(-1)
+            next_scores = next_scores_processed + beam_scores.unsqueeze(-1)
 
             # Sample 2 next tokens for each beam (so we have some spare tokens and match output of beam search)
             vocab_size = next_scores.size(-1)
@@ -667,6 +599,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             past_key_values = self.generator.t5._reorder_cache(
                 outputs.past_key_values, next_beam_indices
             )
+            self._reorder_retrieved_premises(next_beam_indices)
             beam_scores = next_beam_scores
 
             if input_ids.size(-1) >= max_length - 1 or all(done):
@@ -706,6 +639,134 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             scores[i] = s
 
         return sequences, scores
+
+    def _init_retrieved_premises(self, batch_beam_size: int):
+        self.premise_names = [None for _ in range(batch_beam_size)]
+        self.premise_scores = [None for _ in range(batch_beam_size)]
+        self.time_retrieval = 0.0
+
+    def _reorder_retrieved_premises(self, next_beam_indices: List[int]) -> None:
+        self.premise_names = [copy(self.premise_names[i]) for i in next_beam_indices]
+        self.premise_scores = [copy(self.premise_scores[i]) for i in next_beam_indices]
+
+    def _in_generation_mode(self, beam_idx: int) -> bool:
+        return self.premise_names[beam_idx] is None
+
+    def _in_retrival_mode(self, beam_idx: int) -> bool:
+        return self.premise_names[beam_idx] is not None
+
+    def _find_open_mark(self, s: bytes) -> Optional[bytes]:
+        """Check if ``s`` has an open :code:`<a>` that is not closed by :code:`</a>`.
+        If so, return the substring from the open :code:`<a>` to the end of ``s``."""
+        if s.count(self.mark_start_ids) > s.count(self.mark_end_ids):
+            return s[s.rfind(self.mark_start_ids) + len(self.mark_start_ids) :]
+        else:
+            return None
+
+    def _update_retrieved_premises(
+        self,
+        beam_idx: int,
+        premise_names: Optional[List[List[int]]],
+        premise_scores: Optional[List[float]],
+    ) -> None:
+        assert (premise_names is None) == (premise_scores is None)
+        self.premise_names[beam_idx] = premise_names
+        self.premise_scores[beam_idx] = premise_scores
+
+    def _process_logits(
+        self,
+        state: List[str],
+        file_path: Path,
+        theorem_full_name: str,
+        theorem_pos: Pos,
+        batch_size: int,
+        num_beams: int,
+        done: List[bool],
+        input_ids: torch.LongTensor,
+        scores: torch.FloatTensor,
+    ) -> torch.FloatTensor:
+        # TODO: This is retrieval-only.
+        num_special_tokens = self.generator.tokenizer._num_special_tokens
+
+        for batch_idx in range(batch_size):
+            if done[batch_idx]:
+                continue
+
+            for beam_idx in range(num_beams):
+                batch_beam_idx = batch_idx * num_beams + beam_idx
+                tactic_prefix_ids = input_ids[batch_beam_idx, 1:]
+                tactic_prefix = bytes((tactic_prefix_ids - num_special_tokens).tolist())
+                tactic_prefix_str = self.generator.tokenizer.decode(tactic_prefix_ids)
+                assert is_well_formed(tactic_prefix_str)
+
+                if self._in_generation_mode(batch_beam_idx) and tactic_prefix.endswith(
+                    self.mark_end_ids[:-1]
+                ):
+                    # Prevent MARK_END_SYMBOL from being generated.
+                    scores[
+                        batch_beam_idx, self.mark_end_ids[-1] + num_special_tokens
+                    ] = -float("inf")
+                    scores[batch_beam_idx] = F.log_softmax(
+                        scores[batch_beam_idx], dim=0
+                    )
+
+                if tactic_prefix.endswith(self.mark_start_ids):  # <a> detected.
+                    # TODO: Don't have to retrieve self.num_beams items.
+                    # TODO: Dont' discount the beam score using premise_scores.
+                    # TODO: Maybe cache the results of the retrieval.
+                    assert self._in_generation_mode(batch_beam_idx)
+                    time_start = monotonic()
+                    premises, premise_scores = self.retriever.retrieve(
+                        state[batch_idx],
+                        file_path,
+                        theorem_full_name,
+                        theorem_pos,
+                        tactic_prefix_str,
+                        num_beams,
+                    )
+                    self.time_retrieval += monotonic() - time_start
+                    premise_names = [
+                        bytes(
+                            x - num_special_tokens
+                            for x in self.generator.tokenizer.encode(
+                                p.full_name + MARK_END_SYMBOL, add_special_tokens=False
+                            )
+                        )
+                        for p in premises
+                    ]
+                    self._update_retrieved_premises(
+                        batch_beam_idx, premise_names, premise_scores
+                    )
+                elif tactic_prefix.endswith(self.mark_end_ids):
+                    assert self._in_retrival_mode(batch_beam_idx)
+                    self._update_retrieved_premises(batch_beam_idx, None, None)
+
+                name_prefix = self._find_open_mark(tactic_prefix)
+
+                if name_prefix is not None:
+                    # Modify scores[i].
+                    possible_suffixes = []
+                    suffix_scores = []
+                    for s, p in zip_strict(
+                        self.premise_names[batch_beam_idx],
+                        self.premise_scores[batch_beam_idx],
+                    ):
+                        if s.startswith(name_prefix) and s != name_prefix:
+                            possible_suffixes.append(s[len(name_prefix) :])
+                            suffix_scores.append(p)
+
+                    assert len(possible_suffixes) > 0
+
+                    suffix_probs = torch.tensor(suffix_scores).softmax(dim=0).tolist()
+                    byte_probs = defaultdict(float)
+                    for s, p in zip_strict(possible_suffixes, suffix_probs):
+                        byte_probs[s[0] + num_special_tokens] += p
+
+                    scores[batch_beam_idx].fill_(-float("inf"))
+                    for b_id, p in byte_probs.items():
+                        scores[batch_beam_idx, b_id] = math.log(p)
+
+        return scores
 
 
 class GPT4TacticGenerator(TacticGenerator):

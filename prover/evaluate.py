@@ -1,8 +1,10 @@
 import pdb
+import os
 import json
 import torch
 import random
 import pickle
+import hashlib
 import argparse
 from pathlib import Path
 from loguru import logger
@@ -30,6 +32,10 @@ def get_theorems(args) -> Tuple[List[Theorem], List[Pos]]:
             continue
         if args.full_name is not None and t["full_name"] != args.full_name:
             continue
+        if args.name_filter is not None and not hashlib.md5(
+            t["full_name"].encode()
+        ).hexdigest().startswith(args.name_filter):
+            continue
         repo = LeanGitRepo(t["url"], t["commit"])
         theorems.append(Theorem(repo, t["file_path"], t["full_name"]))
         positions.append(Pos(*t["start"]))
@@ -56,6 +62,7 @@ def main() -> None:
     )
     parser.add_argument("--file-path", type=str)
     parser.add_argument("--full-name", type=str)
+    parser.add_argument("--name-filter", type=str)
     parser.add_argument(
         "--model",
         type=str,
@@ -104,6 +111,7 @@ def main() -> None:
     args = parser.parse_args()
 
     set_logger(args.verbose)
+    logger.info(f"PID: {os.getpid()}")
     logger.info(args)
 
     theorems, positions = get_theorems(args)

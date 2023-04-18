@@ -89,7 +89,7 @@ class Node(ABC):
         return "filled"
 
 
-@dataclass(frozen=True)
+@dataclass
 class ProofFinishedNode(Node):
     inner: ProofFinished
 
@@ -102,7 +102,7 @@ class ProofFinishedNode(Node):
     _graphviz_color = "green"
 
 
-@dataclass(frozen=True)
+@dataclass
 class ErrorNode(Node):
     inner: TacticError
 
@@ -194,6 +194,10 @@ class InternalNode(Node):
     @property
     def status(self) -> Status:
         return self._status
+
+    @status.setter
+    def status(self, s):
+        self._status = s
 
     def _recompute_status(self):
         """
@@ -389,7 +393,7 @@ class InternalNode(Node):
         return [(edge, count) for edge, count in edges_and_counts.values()]
 
 
-@dataclass(frozen=True)
+@dataclass
 class Edge:
     """An edge in the search tree, representing a tactic."""
 
@@ -547,19 +551,21 @@ class BestFirstSearchProver(Prover):
 
             self._step()
 
+            if (self.timeout is not None) and (
+                time.monotonic() - initial_sec > self.timeout
+            ):
+                if self.root.status == Status.PROVED:
+                    logger.info("Found a proof but timed out.")
+                self.root.status = Status.OPEN
+                logger.info("Search timed out.")
+                break
+
             if self.root.status == Status.FAILED:
                 logger.info("Failed early!")
                 break
 
             if self.root.status == Status.PROVED:
                 logger.info("Found a proof!")
-                break
-
-            if (self.timeout is not None) and (
-                time.monotonic() - initial_sec > self.timeout
-            ):
-                assert self.root.status == Status.OPEN
-                logger.info("Search timed out.")
                 break
 
             if (self.max_num_expansions is not None) and (
