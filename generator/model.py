@@ -144,15 +144,16 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
         # Prepare the input.
         # logger.debug(f"Input state: {state}")
         assert num_samples > 1
+        max_seq_len = self.max_seq_len
 
         tokenized_state = self.tokenizer(
             state,
             padding="longest",
-            max_length=self.max_seq_len,
+            max_length=max_seq_len,
             truncation=True,
             return_tensors="pt",
         )
-        if tokenized_state.input_ids.size(1) >= self.max_seq_len:
+        if tokenized_state.input_ids.size(1) >= max_seq_len:
             logger.warning(f"The tactic_state is truncated: {state}")
 
         # Perform Beam Search.
@@ -160,7 +161,7 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
         output = self.t5.generate(
             input_ids=tokenized_state.input_ids.to(self.device),
             attention_mask=tokenized_state.attention_mask.to(self.device),
-            max_length=self.max_seq_len,
+            max_length=max_seq_len,
             num_beams=num_samples,
             do_sample=False,
             num_return_sequences=num_samples,

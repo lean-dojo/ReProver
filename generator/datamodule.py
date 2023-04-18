@@ -160,8 +160,9 @@ if __name__ == "__main__":
     ):
         if i == 0:
             print(data_batch)
-        print("state: ", data_batch["state_ids"].size())
-        print("tactic: ", data_batch["tactic_ids"].size())
+        # print("state: ", data_batch["state_ids"].size())
+        if data_batch["tactic_ids"].size(1) > 256:
+            print("tactic: ", data_batch["tactic_ids"].size())
 
     for i, data_batch in tqdm(enumerate(dm.val_dataloader())):
         if i == 0:
