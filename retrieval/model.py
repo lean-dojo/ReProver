@@ -66,7 +66,9 @@ class PremiseRetriever(pl.LightningModule):
             return (
                 trainer.strategy is not None
                 and isinstance(trainer.strategy, DeepSpeedStrategy)
-                and "cpu_checkpointing" in trainer.strategy.config["zero_optimization"]
+                and trainer.strategy.config["activation_checkpointing"][
+                    "cpu_checkpointing"
+                ]
             )
         except RuntimeError:
             return False
@@ -181,7 +183,7 @@ class PremiseRetriever(pl.LightningModule):
 
     def on_validation_start(self) -> None:
         if self.embeddings_staled:
-            self.reindex_corpus(16 * self.trainer.datamodule.batch_size)
+            self.reindex_corpus(8 * self.trainer.datamodule.batch_size)
 
     def on_validation_end(self) -> None:
         outputs = []

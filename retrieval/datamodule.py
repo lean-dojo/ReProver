@@ -103,7 +103,7 @@ class RetrievalDataset(Dataset):
         ex = deepcopy(self.data[idx])
         premises_in_path = []
         premises_not_in_path = []
-        
+
         for p in self.corpus.get_premises(ex["context"].path):
             if p == ex["pos_premise"]:
                 continue
@@ -116,9 +116,7 @@ class RetrievalDataset(Dataset):
         for p in self.corpus.transitive_dep_graph.successors(ex["context"].path):
             if p == ex["pos_premise"].path:
                 premises_in_path += [
-                    _p
-                    for _p in self.corpus.get_premises(p)
-                    if _p != ex["pos_premise"]
+                    _p for _p in self.corpus.get_premises(p) if _p != ex["pos_premise"]
                 ]
             else:
                 premises_not_in_path += self.corpus.get_premises(p)
@@ -127,7 +125,7 @@ class RetrievalDataset(Dataset):
         ex["neg_premises"] = random.sample(
             premises_in_path, num_negatives_in_path
         ) + random.sample(premises_not_in_path, num_negatives_out_path)
-        
+
         return ex
 
     def collate(self, examples: List[Example]) -> Batch:
