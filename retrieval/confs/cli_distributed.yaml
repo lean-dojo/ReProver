@@ -6,7 +6,7 @@ trainer:
   strategy:
     class_path: pytorch_lightning.strategies.DeepSpeedStrategy
     init_args:
-      stage: 3
+      stage: 2
       offload_optimizer: true
       cpu_checkpointing: true
   gradient_clip_val: 1.0
