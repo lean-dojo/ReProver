@@ -775,18 +775,33 @@ class RayBestFirstSearchProver(BestFirstSearchProver):
 class DistributedProver:
     def __init__(
         self,
+        model: str,
+        gen_ckpt_path: str,
+        ret_ckpt_path: str,
         num_cpus: int,
-        tac_gen: TacticGenerator,
+        num_gpus: int,
         timeout: int,
         max_num_expansions: int,
         num_sampled_tactics: int,
         debug: Optional[bool] = False,
-        distributed: bool = True,
     ) -> None:
-        self.distributed = distributed
+        self.distributed = num_cpus > 1
 
-        if distributed:
-            ray.init(num_cpus=num_cpus, num_gpus=0)
+        if self.distributed:
+            ray.init()
+            
+            assert num_gpus <= num_cpus
+            if num_gpus == num_cpus:
+                # Simply give each CPU worker its own GPU.
+                pass
+            elif num_gpus == 0:
+                # CPUs only.
+                pass
+            else:
+                # N CPU workers sharing M GPUs (possibly M << N).
+                pass
+            
+            
             tac_gen = ray.put(tac_gen)
 
             self.provers = [
@@ -833,6 +848,7 @@ class DistributedProver:
             )
             # signal.signal(signal.SIGINT, self.old_sigint)
             # signal.signal(signal.SIGTERM, self.old_sigterm)
+            # TODO: https://docs.ray.io/en/latest/ray-core/actors/terminating-actors.html
         else:
             results = [
                 self.prover.search(t, pos) for t, pos in zip_strict(theorems, positions)

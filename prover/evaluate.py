@@ -104,7 +104,7 @@ def main() -> None:
         help="Maximum number of expansions in Best First Search (Default: 512).",
     )
     parser.add_argument("--num-cpus", type=int, default=1)
-    parser.add_argument("--use-gpu", action="store_true")
+    parser.add_argument("--num-gpus", type=int, default=1)
     parser.add_argument(
         "--verbose", action="store_true", help="Set the logging level to DEBUG."
     )
@@ -115,6 +115,7 @@ def main() -> None:
     logger.info(args)
 
     theorems, positions = get_theorems(args)
+    """
     if args.use_gpu:
         assert torch.cuda.is_available()
         device = torch.device("cuda")
@@ -132,15 +133,18 @@ def main() -> None:
     else:
         assert args.model == "GPT4TacticGenerator"
         tac_gen = GPT4TacticGenerator()
+    """
 
     prover = DistributedProver(
+        args.model,
+        args.gen_ckpt_path,
+        args.ret_ckpt_path,
         num_cpus=args.num_cpus,
-        tac_gen=tac_gen,
+        num_gpus=args.num_gpus,
         timeout=args.timeout,
         max_num_expansions=args.max_num_expansions,
         num_sampled_tactics=args.num_sampled_tactics,
         debug=args.verbose,
-        distributed=(args.num_cpus > 1),
     )
     results = prover.search_unordered(theorems, positions)
 
