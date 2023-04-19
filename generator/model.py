@@ -8,16 +8,7 @@ from copy import copy
 from pathlib import Path
 from lean_dojo import Pos
 from loguru import logger
-from transformers import (
-    T5ForConditionalGeneration,
-    AutoTokenizer,
-    ByT5Tokenizer,
-    BeamSearchScorer,
-    StoppingCriteriaList,
-    MaxLengthCriteria,
-    LogitsProcessor,
-    LogitsProcessorList,
-)
+from transformers import T5ForConditionalGeneration, ByT5Tokenizer
 import pytorch_lightning as pl
 import torch.nn.functional as F
 from torchmetrics import Metric
@@ -31,10 +22,10 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 from common import (
     get_optimizers,
     remove_marks,
-    is_well_formed,
     load_checkpoint,
     to_path,
     zip_strict,
+    find_marks,
     MARK_START_SYMBOL,
     MARK_END_SYMBOL,
 )
@@ -106,7 +97,7 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
         self.warmup_steps = warmup_steps
         self.num_beams = num_beams
         self.max_seq_len = max_seq_len
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = ByT5Tokenizer.from_pretrained(model_name)
         self.t5 = T5ForConditionalGeneration.from_pretrained(model_name)
 
         self.topk_accuracies = dict()
@@ -297,30 +288,22 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
         )
 
 
-class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
-    def __init__(
-        self,
-        state,
-        file_path: Path,
-        theorem_full_name,
-        theorem_pos,
-        tokenizer,
-        retriever,
-        num_beams: int,
-    ) -> None:
-        super().__init__()
-        self.state = state
-        self.file_path = file_path
-        self.theorem_full_name = theorem_full_name
-        self.theorem_pos = theorem_pos
-        assert isinstance(tokenizer, ByT5Tokenizer)
-        self.tokenizer = tokenizer
-        self.retriever = retriever
-        self.num_beams = num_beams
-
-
-# self.logits_processor.process(result["next_beam_indices"].tolist())
-# return result
+class LengthDiscountedBeamHypotheses(BeamHypotheses):
+    def add(self, hyp: torch.LongTensor, sum_logprobs: float, l: int):
+        """
+        Add a new hypothesis to the list.
+        """
+        score = sum_logprobs / (l**self.length_penalty)
+        if len(self) < self.num_beams or score > self.worst_score:
+            self.beams.append((score, hyp, None))
+            if len(self) > self.num_beams:
+                sorted_next_scores = sorted(
+                    [(s, idx) for idx, (s, _, _) in enumerate(self.beams)]
+                )
+                del self.beams[sorted_next_scores[0][1]]
+                self.worst_score = sorted_next_scores[1][0]
+            else:
+                self.worst_score = min(score, self.worst_score)
 
 
 class RetrivalAugmentedTacticGenerator(TacticGenerator):
@@ -423,7 +406,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 length_penalty=-0.5,
             )
             logger.debug(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
-            pdb.set_trace()
         """
 
         # Return the output.
@@ -431,6 +413,9 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             sequences, skip_special_tokens=True
         )
         raw_scores = scores.tolist()
+        logger.debug(
+            f"Raw predicted tactics: {str(list(zip(raw_output_text, raw_scores)))}"
+        )
         batch_size = len(state)
         tactics_with_scores = []
 
@@ -447,7 +432,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             tactics_with_scores.append(list(zip_strict(output_text, output_score)))
 
         logger.debug(f"Predicted tactics: {str(tactics_with_scores)}")
-        # pdb.set_trace()
         return tactics_with_scores
 
     def beam_search(
@@ -485,9 +469,10 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         beam_scores[:, 1:] = -1e9
         beam_scores = beam_scores.flatten()
 
-        # TODO: How to handle retrieved idents in length penalty?
         beam_hyps = [
-            BeamHypotheses(num_beams, length_penalty, early_stopping, max_length)
+            LengthDiscountedBeamHypotheses(
+                num_beams, length_penalty, early_stopping, max_length
+            )
             for _ in range(batch_size)
         ]
         done = [False for _ in range(batch_size)]
@@ -520,7 +505,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 next_token_scores,
             )
             # next_scores_processed = next_token_scores
-            next_scores_processed = logits_processor(input_ids, next_scores)
+            # next_scores_processed = logits_processor(input_ids, next_scores)
             # renormalize_logits=True,
             next_scores = next_scores_processed + beam_scores.unsqueeze(-1)
 
@@ -568,8 +553,20 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                     if next_token.item() == eos_token_id:
                         if beam_token_rank >= num_beams:
                             continue
+                        tac = self.generator.tokenizer.decode(
+                            input_ids[batch_beam_idx], skip_special_tokens=True
+                        )
+                        l = (
+                            1
+                            + len(tac)
+                            - sum(
+                                len(m.group())
+                                for m in find_marks(tac, include_symbols=True)
+                            )
+                        )
+                        l = 1 + len(tac)
                         beam_hyp.add(
-                            input_ids[batch_beam_idx].clone(), next_score.item()
+                            input_ids[batch_beam_idx].clone(), next_score.item(), l
                         )
                     else:
                         next_beam_scores[batch_idx, beam_idx] = next_score
@@ -616,7 +613,15 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 batch_beam_idx = batch_idx * num_beams + beam_id
                 final_score = beam_scores[batch_beam_idx].item()
                 final_tokens = input_ids[batch_beam_idx]
-                beam_hyp.add(final_tokens, final_score)
+                tac = self.generator.tokenizer.decode(
+                    final_tokens, skip_special_tokens=True
+                )
+                l = (
+                    1
+                    + len(tac)
+                    - sum(len(m.group()) for m in find_marks(tac, include_symbols=True))
+                )
+                beam_hyp.add(final_tokens, final_score, l)
 
         # Select the best hypotheses.
         final_beams = list(
@@ -686,7 +691,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         input_ids: torch.LongTensor,
         scores: torch.FloatTensor,
     ) -> torch.FloatTensor:
-        # TODO: This is retrieval-only.
         num_special_tokens = self.generator.tokenizer._num_special_tokens
 
         for batch_idx in range(batch_size):
@@ -698,7 +702,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 tactic_prefix_ids = input_ids[batch_beam_idx, 1:]
                 tactic_prefix = bytes((tactic_prefix_ids - num_special_tokens).tolist())
                 tactic_prefix_str = self.generator.tokenizer.decode(tactic_prefix_ids)
-                assert is_well_formed(tactic_prefix_str)
 
                 if self._in_generation_mode(batch_beam_idx) and tactic_prefix.endswith(
                     self.mark_end_ids[:-1]
@@ -714,6 +717,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 if tactic_prefix.endswith(self.mark_start_ids):  # <a> detected.
                     # TODO: Don't have to retrieve self.num_beams items.
                     # TODO: Dont' discount the beam score using premise_scores.
+                    # TODO: We could also keep the original scores generated by T5 and use retrieved premises only as constraints.
                     # TODO: Maybe cache the results of the retrieval.
                     assert self._in_generation_mode(batch_beam_idx)
                     time_start = monotonic()
@@ -758,11 +762,22 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
 
                     assert len(possible_suffixes) > 0
 
-                    suffix_probs = torch.tensor(suffix_scores).softmax(dim=0).tolist()
+                    t = 1.0
+                    suffix_probs = (
+                        (torch.tensor(suffix_scores) / t).softmax(dim=0).tolist()
+                    )
                     byte_probs = defaultdict(float)
                     for s, p in zip_strict(possible_suffixes, suffix_probs):
                         byte_probs[s[0] + num_special_tokens] += p
 
+                    # pdb.set_trace()
+                    """
+                    valid_byte_ids = set(byte_probs.keys())
+                    for b_id in range(len(scores[batch_beam_idx])):
+                        if b_id not in valid_byte_ids:
+                            scores[batch_beam_idx, b_id] = -float("inf")
+                    scores[batch_beam_idx] = F.log_softmax(scores[batch_beam_idx], dim=0)
+                    """
                     scores[batch_beam_idx].fill_(-float("inf"))
                     for b_id, p in byte_probs.items():
                         scores[batch_beam_idx, b_id] = math.log(p)

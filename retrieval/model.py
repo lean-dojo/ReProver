@@ -15,6 +15,7 @@ from pytorch_lightning.strategies.deepspeed import DeepSpeedStrategy
 from common import (
     Premise,
     Context,
+    Corpus,
     get_optimizers,
     load_checkpoint,
     to_path,
@@ -34,6 +35,7 @@ class PremiseRetriever(pl.LightningModule):
         warmup_steps: int,
         num_retrieved: int,
         max_seq_len: int,
+        corpus_path: Union[str, Path, None] = None,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -44,8 +46,12 @@ class PremiseRetriever(pl.LightningModule):
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.encoder = T5EncoderModel.from_pretrained(model_name)
 
-        self.corpus = None
-        self.embeddings_staled = True
+        if corpus_path is not None:
+            self.corpus = Corpus(corpus_path)
+            self._init_corpus_embeddings()
+        else:
+            self.corpus = None
+            self.embeddings_staled = True
 
         self.validation_step_outputs = []
         # TODO: Do we need re-ranking?
@@ -167,16 +173,18 @@ class PremiseRetriever(pl.LightningModule):
             return
 
         self.corpus = checkpoint["corpus"]
-        state_dict = checkpoint["state_dict"]
-        if "corpus_embeddings" not in state_dict:
-            self._init_corpus_embeddings()
-        else:
-            assert state_dict["corpus_embeddings"].size() == (
-                len(self.corpus),
-                self.embedding_size,
-            )
-            self.register_buffer("corpus_embeddings", state_dict["corpus_embeddings"])
-            self.embeddings_staled = False
+
+        if "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+            if "corpus_embeddings" in checkpoint["state_dict"]:
+                assert state_dict["corpus_embeddings"].size() == (
+                    len(self.corpus),
+                    self.embedding_size,
+                )
+                self.register_buffer(
+                    "corpus_embeddings", state_dict["corpus_embeddings"]
+                )
+                self.embeddings_staled = False
 
     def on_train_batch_end(self, outputs, batch, batch_idx: int) -> None:
         self.embeddings_staled = True
