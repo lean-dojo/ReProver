@@ -2,7 +2,6 @@ import re
 import sys
 import json
 import torch
-import random
 import tempfile
 import networkx as nx
 from tqdm import tqdm
@@ -11,7 +10,6 @@ from loguru import logger
 from lean_dojo import Pos
 import pytorch_lightning as pl
 from dataclasses import dataclass, field
-from pytorch_lightning.cli import LightningCLI
 from pytorch_lightning.utilities.deepspeed import (
     convert_zero_checkpoint_to_fp32_state_dict,
 )
@@ -43,13 +41,6 @@ def find_marks(s: str, include_symbols: bool) -> List[re.Match]:
 def remove_marks(s: str) -> str:
     """Remove all :code:`<a>` and :code:`</a>` from ``s``."""
     return s.replace(MARK_START_SYMBOL, "").replace(MARK_END_SYMBOL, "")
-
-
-def is_well_formed(s: str) -> bool:
-    return 0 <= s.count(MARK_START_SYMBOL) - s.count(MARK_END_SYMBOL) <= 1 and not any(
-        MARK_START_SYMBOL in m.group() or MARK_END_SYMBOL in m.group()
-        for m in find_marks(s, include_symbols=False)
-    )
 
 
 def to_path(p: Union[str, Path]) -> Path:
@@ -347,12 +338,6 @@ def format_state(s: str) -> str:
         return s
     else:
         return s[m.end() :].strip()
-
-
-class CLI(LightningCLI):
-    def add_arguments_to_parser(self, parser) -> None:
-        parser.link_arguments("model.model_name", "data.model_name")
-        parser.link_arguments("data.max_seq_len", "model.max_seq_len")
 
 
 def get_optimizers(
