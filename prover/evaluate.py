@@ -13,13 +13,7 @@ from typing import List, Tuple
 from lean_dojo import LeanGitRepo, Theorem, Pos
 from prover.search import Status, DistributedProver
 
-
 from common import set_logger
-from generator.model import (
-    TransformerTacticGenerator,
-    RetrivalAugmentedTacticGenerator,
-    GPT4TacticGenerator,
-)
 
 
 def get_theorems(args) -> Tuple[List[Theorem], List[Pos]]:

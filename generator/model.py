@@ -319,10 +319,6 @@ class RetrievalAugmentedLogitsProcessor(LogitsProcessor):
         self.num_beams = num_beams
 
 
-# self.logits_processor.process(result["next_beam_indices"].tolist())
-# return result
-
-
 class RetrivalAugmentedTacticGenerator(TacticGenerator):
     def __init__(
         self,
@@ -520,7 +516,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 next_token_scores,
             )
             # next_scores_processed = next_token_scores
-            next_scores_processed = logits_processor(input_ids, next_scores)
+            # next_scores_processed = logits_processor(input_ids, next_scores)
             # renormalize_logits=True,
             next_scores = next_scores_processed + beam_scores.unsqueeze(-1)
 
