@@ -770,13 +770,13 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                     for s, p in zip_strict(possible_suffixes, suffix_probs):
                         byte_probs[s[0] + num_special_tokens] += p
 
-                    # pdb.set_trace()
                     """
                     valid_byte_ids = set(byte_probs.keys())
                     for b_id in range(len(scores[batch_beam_idx])):
                         if b_id not in valid_byte_ids:
                             scores[batch_beam_idx, b_id] = -float("inf")
                     scores[batch_beam_idx] = F.log_softmax(scores[batch_beam_idx], dim=0)
+                    # pdb.set_trace()
                     """
                     scores[batch_beam_idx].fill_(-float("inf"))
                     for b_id, p in byte_probs.items():
