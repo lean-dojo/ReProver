@@ -692,6 +692,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         scores: torch.FloatTensor,
     ) -> torch.FloatTensor:
         num_special_tokens = self.generator.tokenizer._num_special_tokens
+        scores[:, 256 + num_special_tokens :] = -float("inf")
 
         for batch_idx in range(batch_size):
             if done[batch_idx]:
@@ -710,9 +711,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                     scores[
                         batch_beam_idx, self.mark_end_ids[-1] + num_special_tokens
                     ] = -float("inf")
-                    scores[batch_beam_idx] = F.log_softmax(
-                        scores[batch_beam_idx], dim=0
-                    )
 
                 if tactic_prefix.endswith(self.mark_start_ids):  # <a> detected.
                     # TODO: Don't have to retrieve self.num_beams items.
@@ -762,7 +760,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
 
                     assert len(possible_suffixes) > 0
 
-                    t = 1.0
+                    t = 1.0  # TODO: Tune
                     suffix_probs = (
                         (torch.tensor(suffix_scores) / t).softmax(dim=0).tolist()
                     )
@@ -782,6 +780,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                     for b_id, p in byte_probs.items():
                         scores[batch_beam_idx, b_id] = math.log(p)
 
+        scores = F.log_softmax(scores, dim=1)
         return scores
 
 
