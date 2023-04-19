@@ -760,7 +760,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
 
                     assert len(possible_suffixes) > 0
 
-                    t = 1.0  # TODO: Tune
+                    t = 0.5  # TODO: Tune
                     suffix_probs = (
                         (torch.tensor(suffix_scores) / t).softmax(dim=0).tolist()
                     )
