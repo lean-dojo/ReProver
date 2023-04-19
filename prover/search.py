@@ -645,22 +645,25 @@ class BestFirstSearchProver:
     def _batch_generate_gpu(
         self,
         state: List[str],
-        file_path: Path,
-        theorem_full_name: str,
-        theorem_pos: Pos,
-        num_samples,
+        file_path: List[Path],
+        theorem_full_name: List[str],
+        theorem_pos: List[Pos],
+        num_samples: int,
     ) -> List[List[Tuple[str, float]]]:
-        self.input_queue.put(
-            {
-                "state": state,
-                "file_path": file_path,
-                "theorem_full_name": theorem_full_name,
-                "theorem_pos": theorem_pos,
-                "num_samples": num_samples,
-                "output_queue": self.output_queue,
-            }
-        )
-        return self.output_queue.get()
+        req = {
+            "state": state,
+            "file_path": file_path,
+            "theorem_full_name": theorem_full_name,
+            "theorem_pos": theorem_pos,
+            "num_samples": num_samples,
+            "output_queue": self.output_queue,
+        }
+        logger.debug(f"Sending request to GPU: {req}")
+        self.input_queue.put(req)
+        logger.debug("Waiting for response from GPU...")
+        res = self.output_queue.get()
+        logger.debug(f"Got a response from GPU: {res}")
+        return res
 
     def _generate_tactics(self, ts: str, cpu_only: bool) -> List[Tuple[str, float]]:
         t0 = time.monotonic()
@@ -671,9 +674,9 @@ class BestFirstSearchProver:
             if not cpu_only and self.gpu_tac_gen is not None:
                 suggestions = self._batch_generate_gpu(
                     state=[ts],
-                    file_path=Path(self.theorem.repo.name) / self.theorem.file_path,
-                    theorem_full_name=self.theorem.full_name,
-                    theorem_pos=self.posision,
+                    file_path=[Path(self.theorem.repo.name) / self.theorem.file_path],
+                    theorem_full_name=[self.theorem.full_name],
+                    theorem_pos=[self.posision],
                     num_samples=self.num_sampled_tactics,
                 )[0]
             else:
@@ -686,20 +689,21 @@ class BestFirstSearchProver:
                 )
         else:
             first_goal = ts.split("\n\n")[0]
+            path = Path(self.theorem.repo.name) / self.theorem.file_path
             if not cpu_only and self.gpu_tac_gen is not None:
                 all_suggestions = self._batch_generate_gpu(
                     state=[ts, first_goal],
-                    file_path=Path(self.theorem.repo.name) / self.theorem.file_path,
-                    theorem_full_name=self.theorem.full_name,
-                    theorem_pos=self.posision,
+                    file_path=[path, path],
+                    theorem_full_name=[self.theorem.full_name, self.theorem.full_name],
+                    theorem_pos=[self.posision, self.posision],
                     num_samples=self.num_sampled_tactics,
                 )
             else:
                 all_suggestions = self.tac_gen.batch_generate(
                     state=[ts, first_goal],
-                    file_path=Path(self.theorem.repo.name) / self.theorem.file_path,
-                    theorem_full_name=self.theorem.full_name,
-                    theorem_pos=self.posision,
+                    file_path=[path, path],
+                    theorem_full_name=[self.theorem.full_name, self.theorem.full_name],
+                    theorem_pos=[self.posision, self.posision],
                     num_samples=self.num_sampled_tactics,
                 )
             suggestions = {}
@@ -868,6 +872,7 @@ class CpuProver(BestFirstSearchProver):
         )
 
 
+# TODO: Merge with CpuProver
 @ray.remote(num_cpus=1, num_gpus=1)
 class GpuProver(BestFirstSearchProver):
     def __init__(
@@ -898,11 +903,53 @@ class GpuProver(BestFirstSearchProver):
 
 @ray.remote(num_cpus=1, num_gpus=1)
 class GpuTacticGenerator:
-    def __init__(self, input_queue: Queue) -> None:
+    def __init__(
+        self, model: str, gen_ckpt_path: Path, ret_ckpt_path: Path, input_queue: Queue
+    ) -> None:
         self.input_queue = input_queue
+        self.tac_gen = create_tactic_generator(
+            model, gen_ckpt_path, ret_ckpt_path, torch.device("cuda")
+        )
 
     def run(self) -> None:
-        raise NotImplementedError
+        # TODO: Add some statistics, e.g., idle time, number of requests, etc.
+        logger.debug("GPU Tactic Generator waiting for jobs...")
+        # TODO: It's also possible to improve the batching of RetrievalAugmentedTacticGenerator
+        while True:
+            n = self.input_queue.size()
+            if n == 0:
+                time.sleep(0.1)  # TODO: Make this configurable.
+                continue
+            reqs = self.input_queue.get_nowait_batch(n)
+            logger.debug(f"GPU Tactic Generator got {n} requests {reqs}")
+
+            state = []
+            file_path = []
+            theorem_full_name = []
+            theorem_pos = []
+            num_samples = []
+
+            for req in reqs:
+                state.extend(req["state"])
+                file_path.extend(req["file_path"])
+                theorem_full_name.extend(req["theorem_full_name"])
+                theorem_pos.extend(req["theorem_pos"])
+                num_samples.append(req["num_samples"])
+
+            assert all(num_samples[0] for _ in num_samples)
+            num_samples = num_samples[0]
+
+            all_suggestions = self.tac_gen.batch_generate(
+                state, file_path, theorem_full_name, theorem_pos, num_samples
+            )
+
+            base_idx = 0
+            for req in reqs:
+                suggestions = all_suggestions[base_idx : base_idx + len(req["state"])]
+                base_idx += len(req["state"])
+                req["output_queue"].put_nowait(suggestions)
+
+            logger.debug(f"Requests finished. {self.input_queue.size()} requests left.")
 
 
 class DistributedProver:
@@ -923,7 +970,6 @@ class DistributedProver:
         ray.init()
 
         assert num_gpus <= num_cpus
-        """
         if num_gpus == num_cpus:
             # Simply give each CPU worker its own GPU.
             logger.warning(
@@ -941,9 +987,7 @@ class DistributedProver:
                 )
                 for _ in range(num_cpus)
             ]
-        el
-        """
-        if num_gpus == 0:
+        elif num_gpus == 0:
             logger.info(f"Launching {num_cpus} CPU workers.")
             # CPUs only.
             provers = [
@@ -965,8 +1009,11 @@ class DistributedProver:
             logger.info(
                 f"Launching {num_cpus - num_gpus} CPU workers, sharing {num_gpus} GPUs."
             )
+            logger.warning("try_cpu_first == False")
             input_queue = Queue()
-            gpu_tac_gen = GpuTacticGenerator.remote(input_queue)
+            gpu_tac_gen = GpuTacticGenerator.remote(
+                model, gen_ckpt_path, ret_ckpt_path, input_queue
+            )
             gpu_tac_gen.run.remote()
             output_queues = [Queue() for _ in range(num_cpus - num_gpus)]
             provers = [
@@ -979,6 +1026,7 @@ class DistributedProver:
                     num_sampled_tactics,
                     debug,
                     gpu_tac_gen,
+                    False,
                     input_queue,
                     output_queues[i],
                 )

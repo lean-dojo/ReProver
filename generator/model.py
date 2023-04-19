@@ -83,9 +83,9 @@ class TacticGenerator(ABC):
     def batch_generate(
         self,
         state: List[str],
-        file_path: Path,
-        theorem_full_name: str,
-        theorem_pos: Pos,
+        file_path: List[Path],
+        theorem_full_name: List[str],
+        theorem_pos: List[Pos],
         num_samples: int,
     ) -> List[List[Tuple[str, float]]]:
         raise NotImplementedError
@@ -130,15 +130,15 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
         num_samples: int,
     ) -> List[Tuple[str, float]]:
         return self.batch_generate(
-            [state], file_path, theorem_full_name, theorem_pos, num_samples
+            [state], [file_path], [theorem_full_name], [theorem_pos], num_samples
         )[0]
 
     def batch_generate(
         self,
         state: List[str],
-        file_path: Path,
-        theorem_full_name: str,
-        theorem_pos: Pos,
+        file_path: List[Path],
+        theorem_full_name: List[str],
+        theorem_pos: List[Pos],
         num_samples: int,
     ) -> List[List[Tuple[str, float]]]:
         # Prepare the input.
@@ -354,15 +354,15 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         num_samples: int,
     ) -> List[Tuple[str, float]]:
         return self.batch_generate(
-            [state], file_path, theorem_full_name, theorem_pos, num_samples
+            [state], [file_path], [theorem_full_name], [theorem_pos], num_samples
         )[0]
 
     def batch_generate(
         self,
         state: List[str],
-        file_path: Path,
-        theorem_full_name: str,
-        theorem_pos: Pos,
+        file_path: List[Path],
+        theorem_full_name: List[str],
+        theorem_pos: List[Pos],
         num_samples: int,
     ) -> List[List[Tuple[str, float]]]:
         logger.debug(state)
@@ -403,25 +403,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         )
         logger.debug(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
 
-        """
-        if len(state) > 1:
-            logger.warning("DEBUG ONLY")
-            time_start = monotonic()
-            output = self.generator.t5.generate(
-                input_ids=state_ids,
-                max_length=self.generator.max_seq_len,
-                num_beams=num_samples,
-                do_sample=False,
-                num_return_sequences=num_samples,
-                early_stopping=False,
-                output_scores=True,
-                return_dict_in_generate=True,
-                length_penalty=-0.5,
-            )
-            logger.debug(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
-            pdb.set_trace()
-        """
-
         # Return the output.
         raw_output_text = self.generator.tokenizer.batch_decode(
             sequences, skip_special_tokens=True
@@ -449,9 +430,9 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
     def beam_search(
         self,
         state: List[str],
-        file_path: Path,
-        theorem_full_name: str,
-        theorem_pos: Pos,
+        file_path: List[Path],
+        theorem_full_name: List[str],
+        theorem_pos: List[Pos],
         encoder_outputs,
         attention_mask,
         num_beams: int,
@@ -673,9 +654,9 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
     def _process_logits(
         self,
         state: List[str],
-        file_path: Path,
-        theorem_full_name: str,
-        theorem_pos: Pos,
+        file_path: List[Path],
+        theorem_full_name: List[str],
+        theorem_pos: List[Pos],
         batch_size: int,
         num_beams: int,
         done: List[bool],
@@ -715,9 +696,9 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                     time_start = monotonic()
                     premises, premise_scores = self.retriever.retrieve(
                         state[batch_idx],
-                        file_path,
-                        theorem_full_name,
-                        theorem_pos,
+                        file_path[batch_idx],
+                        theorem_full_name[batch_idx],
+                        theorem_pos[batch_idx],
                         tactic_prefix_str,
                         num_beams,
                     )
