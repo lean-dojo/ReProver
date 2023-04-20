@@ -1,12 +1,13 @@
-import pdb
-import signal
 import math
+import sys
+import pdb
 import ray
 import time
 import heapq
 import torch
 import graphviz
 import itertools
+from pathlib import Path
 from enum import Enum
 from lean_dojo import (
     Pos,
@@ -26,12 +27,18 @@ from abc import ABC, abstractmethod
 from functools import total_ordering
 from dataclasses import dataclass, field
 from ray.util.actor_pool import ActorPool
-from typing import List, Optional, Iterable, Tuple
+from ray.util.queue import Queue
+from typing import List, Optional, Iterable, Tuple, Union
 from lean_dojo import ProofFinished, TacticState, TacticError
 
 
-from common import zip_strict
-from generator.model import TacticGenerator
+from common import zip_strict, to_path
+from generator.model import (
+    TacticGenerator,
+    TransformerTacticGenerator,
+    RetrivalAugmentedTacticGenerator,
+    GPT4TacticGenerator,
+)
 
 
 class Status(Enum):
@@ -454,8 +461,8 @@ class SearchResult:
     fastest_proof: Optional[List[str]]
 
     actor_time: float
-    # critic_time_sec: float
     environment_time: float
+    total_time: float
 
     num_total_nodes: int
     num_searched_nodes: int
@@ -463,29 +470,47 @@ class SearchResult:
     tree: Node
 
 
-@dataclass
-class Prover(ABC):
-    tac_gen: TacticGenerator = field(repr=False)
+class BestFirstSearchProver:
+    def __init__(
+        self,
+        tac_gen: TacticGenerator,
+        timeout: int,
+        max_num_expansions: int,
+        num_sampled_tactics: int,
+        debug: bool,
+        gpu_tac_gen,
+        try_cpu_first,
+        input_queue: Optional[Queue],
+        output_queue: Optional[Queue],
+    ) -> None:
+        self.tac_gen = tac_gen
+        self.timeout = timeout
+        self.max_num_expansions = max_num_expansions
+        self.num_sampled_tactics = num_sampled_tactics
+        self.debug = debug
+        self.gpu_tac_gen = gpu_tac_gen
+        self.try_cpu_first = try_cpu_first
+        self.input_queue = input_queue
+        self.output_queue = output_queue
+        assert output_queue is None or output_queue.empty()
 
-    timeout: Optional[int]
-    max_num_expansions: Optional[int]
-
-    debug: bool
-
-    actor_time: float = field(default=0.0, init=False, repr=False)
-    environment_time: float = field(default=0.0, init=False, repr=False)
-    num_expansions: int = field(default=0, init=False, repr=False)
-
-    @abstractmethod
-    def search(self, thm: Theorem, pos: Pos) -> SearchResult:
-        raise NotImplementedError
-
-
-@dataclass
-class BestFirstSearchProver(Prover):
-    num_sampled_tactics: int
+        self.num_expansions = 0
+        self.actor_time = 0.0
+        self.environment_time = 0.0
+        self.total_time = None
 
     def search(self, thm: Theorem, pos: Pos) -> Optional[SearchResult]:
+        if self.try_cpu_first:
+            result = self._search(thm, pos, True)
+            if result is None:
+                return None
+            elif result.total_time > self.timeout and self.gpu_tac_gen is not None:
+                logger.info("Retry with GPU")
+                return self._search(thm, pos, False)
+        else:
+            return self._search(thm, pos, False)
+
+    def _search(self, thm: Theorem, pos: Pos, cpu_only: bool) -> Optional[SearchResult]:
         logger.info(f"Proving {thm}")
 
         self.theorem = thm
@@ -511,7 +536,7 @@ class BestFirstSearchProver(Prover):
 
                 with torch.no_grad():
                     try:
-                        self._best_first_search()
+                        self._best_first_search(cpu_only)
                     except DojoCrashError:
                         logger.warning(f"Dojo crashed when proving {thm}")
                         pass
@@ -528,8 +553,8 @@ class BestFirstSearchProver(Prover):
                 shortest_proof=shortest_proof,
                 fastest_proof=fastest_proof,
                 actor_time=self.actor_time,
-                # critic_time_sec=self.critic_time,
                 environment_time=self.environment_time,
+                total_time=self.total_time,
                 num_total_nodes=len(self.nodes),
                 num_searched_nodes=self.num_expansions,
                 tree=self.root,
@@ -541,19 +566,18 @@ class BestFirstSearchProver(Prover):
         except DojoInitError as ex:
             return None
 
-    def _best_first_search(self) -> None:
-        initial_sec = time.monotonic()
+    def _best_first_search(self, cpu_only: bool) -> None:
+        time_start = time.monotonic()
 
         while True:
             if len(self.priority_queue) == 0:
                 logger.info("Ran out of nodes to search.")
                 break
 
-            self._step()
+            self._step(cpu_only)
 
-            if (self.timeout is not None) and (
-                time.monotonic() - initial_sec > self.timeout
-            ):
+            self.total_time = time.monotonic() - time_start
+            if self.total_time > self.timeout:
                 if self.root.status == Status.PROVED:
                     logger.info("Found a proof but timed out.")
                 self.root.status = Status.OPEN
@@ -574,7 +598,7 @@ class BestFirstSearchProver(Prover):
                 logger.info("Max expansions reached.")
                 break
 
-    def _step(self):
+    def _step(self, cpu_only: bool):
         """
         Perform a single step of search.
 
@@ -596,7 +620,7 @@ class BestFirstSearchProver(Prover):
             ts = search_node.state.value
         else:
             ts = search_node.state.unsolved_tactic_state
-        suggestions = self._generate_tactics(ts)
+        suggestions = self._generate_tactics(ts, cpu_only)
 
         # Try all tactics in order of descending logprob, and collect the results. Any
         # new nodes are added to `self.nodes`, and edges are added to the result node.
@@ -619,28 +643,70 @@ class BestFirstSearchProver(Prover):
             )
             self.check_invariants()
 
-    def _generate_tactics(self, ts: str) -> List[Tuple[str, float]]:
+    def _batch_generate_gpu(
+        self,
+        state: List[str],
+        file_path: List[Path],
+        theorem_full_name: List[str],
+        theorem_pos: List[Pos],
+        num_samples: int,
+    ) -> List[List[Tuple[str, float]]]:
+        req = {
+            "state": state,
+            "file_path": file_path,
+            "theorem_full_name": theorem_full_name,
+            "theorem_pos": theorem_pos,
+            "num_samples": num_samples,
+            "output_queue": self.output_queue,
+        }
+        logger.debug(f"Sending request to GPU: {req}")
+        self.input_queue.put(req)
+        logger.debug("Waiting for response from GPU...")
+        res = self.output_queue.get()
+        logger.debug(f"Got a response from GPU: {res}")
+        return res
+
+    def _generate_tactics(self, ts: str, cpu_only: bool) -> List[Tuple[str, float]]:
         t0 = time.monotonic()
 
         num_goals = ts.count("⊢")
         assert num_goals >= 1
         if num_goals == 1:
-            suggestions = self.tac_gen.generate(
-                state=ts,
-                file_path=Path(self.theorem.repo.name) / self.theorem.file_path,
-                theorem_full_name=self.theorem.full_name,
-                theorem_pos=self.posision,
-                num_samples=self.num_sampled_tactics,
-            )
+            if not cpu_only and self.gpu_tac_gen is not None:
+                suggestions = self._batch_generate_gpu(
+                    state=[ts],
+                    file_path=[Path(self.theorem.repo.name) / self.theorem.file_path],
+                    theorem_full_name=[self.theorem.full_name],
+                    theorem_pos=[self.posision],
+                    num_samples=self.num_sampled_tactics,
+                )[0]
+            else:
+                suggestions = self.tac_gen.generate(
+                    state=ts,
+                    file_path=Path(self.theorem.repo.name) / self.theorem.file_path,
+                    theorem_full_name=self.theorem.full_name,
+                    theorem_pos=self.posision,
+                    num_samples=self.num_sampled_tactics,
+                )
         else:
             first_goal = ts.split("\n\n")[0]
-            all_suggestions = self.tac_gen.batch_generate(
-                state=[ts, first_goal],
-                file_path=Path(self.theorem.repo.name) / self.theorem.file_path,
-                theorem_full_name=self.theorem.full_name,
-                theorem_pos=self.posision,
-                num_samples=self.num_sampled_tactics,
-            )
+            path = Path(self.theorem.repo.name) / self.theorem.file_path
+            if not cpu_only and self.gpu_tac_gen is not None:
+                all_suggestions = self._batch_generate_gpu(
+                    state=[ts, first_goal],
+                    file_path=[path, path],
+                    theorem_full_name=[self.theorem.full_name, self.theorem.full_name],
+                    theorem_pos=[self.posision, self.posision],
+                    num_samples=self.num_sampled_tactics,
+                )
+            else:
+                all_suggestions = self.tac_gen.batch_generate(
+                    state=[ts, first_goal],
+                    file_path=[path, path],
+                    theorem_full_name=[self.theorem.full_name, self.theorem.full_name],
+                    theorem_pos=[self.posision, self.posision],
+                    num_samples=self.num_sampled_tactics,
+                )
             suggestions = {}
             for t, s in itertools.chain.from_iterable(all_suggestions):
                 if t not in suggestions or suggestions[t] < s:
@@ -685,7 +751,6 @@ class BestFirstSearchProver(Prover):
                 result_node = InternalNode(
                     state=response,
                     cumulative_logprob=logprob + node.cumulative_logprob,
-                    # critic_score=self._get_critic_score(response.tactic_state),
                     critic_score=None,
                 )
 
@@ -763,35 +828,181 @@ class BestFirstSearchProver(Prover):
         return graph
 
 
-class MctsProver(Prover):
-    pass
+def create_tactic_generator(
+    model: str, gen_ckpt_path: Path, ret_ckpt_path: Path, device
+):
+    if model == "TransformerTacticGenerator":
+        return TransformerTacticGenerator.load(gen_ckpt_path, device, freeze=True)
+    elif model == "RetrivalAugmentedTacticGenerator":
+        return RetrivalAugmentedTacticGenerator(gen_ckpt_path, ret_ckpt_path, device)
+    else:
+        assert model == "GPT4TacticGenerator"
+        return GPT4TacticGenerator()
 
 
 @ray.remote(num_cpus=1)
-class RayBestFirstSearchProver(BestFirstSearchProver):
-    pass
+class CpuProver(BestFirstSearchProver):
+    def __init__(
+        self,
+        model: str,
+        gen_ckpt_path: Path,
+        ret_ckpt_path: Path,
+        timeout: int,
+        max_num_expansions: int,
+        num_sampled_tactics: int,
+        debug: bool,
+        gpu_tac_gen=None,
+        try_cpu_first: bool = False,
+        # TODO: set try_cpu_first
+        input_queue: Optional[Queue] = None,
+        output_queue: Optional[Queue] = None,
+    ) -> None:
+        if not try_cpu_first and gpu_tac_gen is not None:
+            tac_gen = None
+        else:
+            tac_gen = create_tactic_generator(
+                model, gen_ckpt_path, ret_ckpt_path, torch.device("cpu")
+            )
+        super().__init__(
+            tac_gen,
+            timeout,
+            max_num_expansions,
+            num_sampled_tactics,
+            debug,
+            gpu_tac_gen,
+            try_cpu_first,
+            input_queue,
+            output_queue,
+        )
+
+
+# TODO: Merge with CpuProver
+@ray.remote(num_cpus=1, num_gpus=1)
+class GpuProver(BestFirstSearchProver):
+    def __init__(
+        self,
+        model: str,
+        gen_ckpt_path: Path,
+        ret_ckpt_path: Path,
+        timeout: int,
+        max_num_expansions: int,
+        num_sampled_tactics: int,
+        debug: bool,
+    ) -> None:
+        tac_gen = create_tactic_generator(
+            model, gen_ckpt_path, ret_ckpt_path, torch.device("cuda")
+        )
+        super().__init__(
+            tac_gen,
+            timeout,
+            max_num_expansions,
+            num_sampled_tactics,
+            debug,
+            None,
+            False,
+            None,
+            None,
+        )
+
+
+@ray.remote(num_cpus=1, num_gpus=1)
+class GpuTacticGenerator:
+    def __init__(
+        self,
+        model: str,
+        gen_ckpt_path: Path,
+        ret_ckpt_path: Path,
+        input_queue: Queue,
+        batch_size: int = 16,
+    ) -> None:
+        self.model = model
+        self.gen_ckpt_path = gen_ckpt_path
+        self.ret_ckpt_path = ret_ckpt_path
+        self.input_queue = input_queue
+        self.batch_size = batch_size
+
+    def initialize(self):
+        self.tac_gen = create_tactic_generator(
+            self.model, self.gen_ckpt_path, self.ret_ckpt_path, torch.device("cuda")
+        )
+
+    def run(self) -> None:
+        # TODO: Add some statistics, e.g., idle time, number of requests, etc.
+        logger.debug("GPU Tactic Generator waiting for jobs...")
+        # TODO: It's also possible to improve the batching of RetrievalAugmentedTacticGenerator
+        while True:
+            n = self.input_queue.size()
+            logger.debug(f"n: {n}")
+            if n == 0:
+                time.sleep(0.1)  # TODO: Make this configurable.
+                continue
+            elif n > 800:
+                logger.warning("Soft limit of 800 reached for input_queue.")
+            if n >= 1000:
+                logger.error("Hard limit of 1000 reached for input_queue.")
+                ray.shutdown()
+                sys.exit(1)
+            n = min(self.batch_size, n)
+            reqs = self.input_queue.get_nowait_batch(n)
+            logger.debug(f"GPU Tactic Generator retrieved {len(reqs)} requests {reqs}")
+
+            state = []
+            file_path = []
+            theorem_full_name = []
+            theorem_pos = []
+            num_samples = []
+
+            for req in reqs:
+                state.extend(req["state"])
+                file_path.extend(req["file_path"])
+                theorem_full_name.extend(req["theorem_full_name"])
+                theorem_pos.extend(req["theorem_pos"])
+                num_samples.append(req["num_samples"])
+
+            assert all(num_samples[0] for _ in num_samples)
+            num_samples = num_samples[0]
+
+            all_suggestions = self.tac_gen.batch_generate(
+                state, file_path, theorem_full_name, theorem_pos, num_samples
+            )
+
+            base_idx = 0
+            for req in reqs:
+                suggestions = all_suggestions[base_idx : base_idx + len(req["state"])]
+                base_idx += len(req["state"])
+                req["output_queue"].put_nowait(suggestions)
+
+            logger.debug(f"Requests finished. {self.input_queue.size()} requests left.")
 
 
 class DistributedProver:
     def __init__(
         self,
+        model: str,
+        gen_ckpt_path: Union[str, Path],
+        ret_ckpt_path: Union[str, Path],
         num_cpus: int,
-        tac_gen: TacticGenerator,
+        num_gpus: int,
         timeout: int,
         max_num_expansions: int,
         num_sampled_tactics: int,
         debug: Optional[bool] = False,
-        distributed: bool = True,
     ) -> None:
-        self.distributed = distributed
+        gen_ckpt_path = to_path(gen_ckpt_path)
+        ret_ckpt_path = to_path(ret_ckpt_path)
+        ray.init()
 
-        if distributed:
-            ray.init(num_cpus=num_cpus, num_gpus=0)
-            tac_gen = ray.put(tac_gen)
-
-            self.provers = [
-                RayBestFirstSearchProver.remote(
-                    tac_gen=tac_gen,
+        assert num_gpus <= num_cpus
+        if num_gpus == num_cpus:
+            # Simply give each CPU worker its own GPU.
+            logger.warning(
+                f"Launching {num_gpus} workers, each with its own GPU. This may lead to low GPU utilization."
+            )
+            provers = [
+                GpuProver.remote(
+                    model,
+                    gen_ckpt_path,
+                    ret_ckpt_path,
                     timeout=timeout,
                     max_num_expansions=max_num_expansions,
                     num_sampled_tactics=num_sampled_tactics,
@@ -799,16 +1010,55 @@ class DistributedProver:
                 )
                 for _ in range(num_cpus)
             ]
-            self.prover_pool = ActorPool(self.provers)
-
+        elif num_gpus == 0:
+            logger.info(f"Launching {num_cpus} CPU workers.")
+            # CPUs only.
+            provers = [
+                CpuProver.remote(
+                    model,
+                    gen_ckpt_path,
+                    ret_ckpt_path,
+                    timeout,
+                    max_num_expansions,
+                    num_sampled_tactics,
+                    debug,
+                )
+                for _ in range(num_cpus)
+            ]
         else:
-            self.prover = BestFirstSearchProver(
-                tac_gen=tac_gen,
-                timeout=timeout,
-                max_num_expansions=max_num_expansions,
-                num_sampled_tactics=num_sampled_tactics,
-                debug=debug,
+            if num_gpus > 1:
+                raise NotImplementedError
+            # N CPU workers sharing M GPUs (possibly M << N).
+            logger.info(
+                f"Launching {num_cpus - num_gpus} CPU workers, sharing {num_gpus} GPUs."
             )
+            logger.warning("try_cpu_first == False")
+            input_queue = Queue(maxsize=1000)
+            gpu_tac_gen = GpuTacticGenerator.remote(
+                model, gen_ckpt_path, ret_ckpt_path, input_queue
+            )
+            ray.get(gpu_tac_gen.initialize.remote())
+            gpu_tac_gen.run.remote()
+            output_queues = [Queue(maxsize=1000) for _ in range(num_cpus - num_gpus)]
+            provers = [
+                CpuProver.remote(
+                    model,
+                    gen_ckpt_path,
+                    ret_ckpt_path,
+                    timeout,
+                    max_num_expansions,
+                    num_sampled_tactics,
+                    debug,
+                    gpu_tac_gen,
+                    False,
+                    input_queue,
+                    output_queues[i],
+                )
+                for i in range(num_cpus - num_gpus)
+            ]
+
+        # TODO: We can make the prover more scalable if ActorPool works with async workers.
+        self.prover_pool = ActorPool(provers)
 
     """
     def _exit_gracefully(self, signum, frame):
@@ -822,19 +1072,19 @@ class DistributedProver:
     def search_unordered(
         self, theorems: List[Theorem], positions: List[Pos]
     ) -> List[SearchResult]:
-        if self.distributed:
-            # self.old_sigint = signal.signal(signal.SIGINT, self._exit_gracefully)
-            # self.old_sigterm = signal.signal(signal.SIGTERM, self._exit_gracefully)
+        # self.old_sigint = signal.signal(signal.SIGINT, self._exit_gracefully)
+        # self.old_sigterm = signal.signal(signal.SIGTERM, self._exit_gracefully)
+        try:
             results = list(
                 self.prover_pool.map_unordered(
                     lambda p, x: p.search.remote(x[0], x[1]),
                     zip_strict(theorems, positions),
                 )
             )
-            # signal.signal(signal.SIGINT, self.old_sigint)
-            # signal.signal(signal.SIGTERM, self.old_sigterm)
-        else:
-            results = [
-                self.prover.search(t, pos) for t, pos in zip_strict(theorems, positions)
-            ]
+        except ray.exceptions.RayActorError as ex:
+            logger.error(ex)
+            sys.exit(1)
+        # signal.signal(signal.SIGINT, self.old_sigint)
+        # signal.signal(signal.SIGTERM, self.old_sigterm)
+        # TODO: https://docs.ray.io/en/latest/ray-core/actors/terminating-actors.html
         return results
