@@ -332,6 +332,10 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             )
         )
 
+    @property
+    def device(self):
+        return self.generator.device
+
     def generate(
         self,
         state: str,
@@ -361,10 +365,10 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             truncation=True,
             return_tensors="pt",
         )
-        state_ids = tokenized_state.input_ids.to(self.generator.device)
-        state_mask = tokenized_state.attention_mask.to(
-            self.generator.device
-        ).repeat_interleave(num_samples, dim=0)
+        state_ids = tokenized_state.input_ids.to(self.device)
+        state_mask = tokenized_state.attention_mask.to(self.device).repeat_interleave(
+            num_samples, dim=0
+        )
 
         if len(state_ids) >= self.generator.max_seq_len:
             logger.warning(f"The tactic_state is truncated: {state}")
@@ -432,7 +436,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         batch_beam_size = encoder_outputs.last_hidden_state.size(0)
         self._init_retrieved_premises(batch_beam_size)
         batch_size = batch_beam_size // num_beams
-        device = self.generator.device
+        device = self.device
         pad_token_id = self.generator.t5.config.pad_token_id
         eos_token_id = self.generator.t5.config.eos_token_id
 
@@ -674,7 +678,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         scores: torch.FloatTensor,
     ) -> torch.FloatTensor:
         num_special_tokens = self.generator.tokenizer._num_special_tokens
-        scores[:, 256 + num_special_tokens :] = -float("inf")
+        scores[:, 256 + num_special_tokens :] = -math.inf
 
         for batch_idx in range(batch_size):
             if done[batch_idx]:
@@ -686,13 +690,21 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 tactic_prefix = bytes((tactic_prefix_ids - num_special_tokens).tolist())
                 tactic_prefix_str = self.generator.tokenizer.decode(tactic_prefix_ids)
 
+                if self._in_retrival_mode(batch_beam_idx) and tactic_prefix.endswith(
+                    self.mark_start_ids[:-1]
+                ):
+                    # Prevent MARK_START_SYMBOL from being generated.
+                    scores[
+                        batch_beam_idx, self.mark_start_ids[-1] + num_special_tokens
+                    ] = -math.inf
+
                 if self._in_generation_mode(batch_beam_idx) and tactic_prefix.endswith(
                     self.mark_end_ids[:-1]
                 ):
                     # Prevent MARK_END_SYMBOL from being generated.
                     scores[
                         batch_beam_idx, self.mark_end_ids[-1] + num_special_tokens
-                    ] = -float("inf")
+                    ] = -math.inf
 
                 if tactic_prefix.endswith(self.mark_start_ids):  # <a> detected.
                     # TODO: Don't have to retrieve self.num_beams items.
@@ -729,7 +741,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 name_prefix = self._find_open_mark(tactic_prefix)
 
                 if name_prefix is not None:
-                    # Modify scores[i].
                     possible_suffixes = []
                     suffix_scores = []
                     for s, p in zip_strict(
@@ -740,8 +751,13 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                             possible_suffixes.append(s[len(name_prefix) :])
                             suffix_scores.append(p)
 
-                    assert len(possible_suffixes) > 0
+                    if len(possible_suffixes) == 0:
+                        possible_suffixes = [self.mark_end_ids]
+                    #    suffix_scores = [0.1]
+                    # TODO: ??
+                    # assert len(possible_suffixes) > 0
 
+                    """
                     t = 0.5  # TODO: Tune
                     suffix_probs = (
                         (torch.tensor(suffix_scores) / t).softmax(dim=0).tolist()
@@ -750,14 +766,26 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                     for s, p in zip_strict(possible_suffixes, suffix_probs):
                         byte_probs[s[0] + num_special_tokens] += p
 
-                    valid_byte_ids = set(byte_probs.keys())
-                    for b_id in range(len(scores[batch_beam_idx])):
-                        if b_id not in valid_byte_ids:
-                            scores[batch_beam_idx, b_id] = -float("inf")
+                    # TODOs: Using generator scores does not make sense for novel premises.
+                    # TODOs: Let's try retrieved premises scores followed by softmax with temperature 0.5, followed by thresholding.
                     """
-                    scores[batch_beam_idx].fill_(-float("inf"))
+                    valid_byte_ids = {
+                        s[0] + num_special_tokens for s in possible_suffixes
+                    }
+                    for b_id in range(len(scores[batch_beam_idx])):
+                        if b_id not in valid_byte_ids and scores[
+                            batch_beam_idx, b_id
+                        ] < math.log(0.3):
+                            scores[batch_beam_idx, b_id] = -math.inf
+                    # scores[batch_beam_idx].fill_(-math.inf)
+                    """
+                    scores[
+                        batch_beam_idx, scores[batch_beam_idx] < math.log(0.3)
+                    ] = -math.inf
                     for b_id, p in byte_probs.items():
-                        scores[batch_beam_idx, b_id] = math.log(p)
+                        scores[batch_beam_idx, b_id] = max(
+                            math.log(p), scores[batch_beam_idx, b_id]
+                        )
                     """
 
         scores = F.log_softmax(scores, dim=1)

@@ -11,7 +11,7 @@ from loguru import logger
 from lean_dojo import Theorem
 from typing import List, Tuple
 from lean_dojo import LeanGitRepo, Theorem, Pos
-from prover.search import Status, DistributedProver
+from prover.proof_search import Status, DistributedProver
 
 from common import set_logger
 
@@ -52,7 +52,7 @@ def main() -> None:
     parser.add_argument(
         "--data-path",
         type=str,
-        default="data/lean_bench/random",
+        default="data/old_lean_bench/random",
     )
     parser.add_argument("--file-path", type=str)
     parser.add_argument("--full-name", type=str)
@@ -84,12 +84,12 @@ def main() -> None:
         help="Number of tactics to sample at each node during proof search (Default: 5).",
     )
     # Follow the setup in PACT.
-    # Add 300 seconds fow now since we use CPUs.
+    # TODO: Change to 600
     parser.add_argument(
         "--timeout",
         type=int,
-        default=900,
-        help="Maximum number of seconds the proof search can take (Default: 900).",
+        default=600,
+        help="Maximum number of seconds the proof search can take (Default: 600).",
     )
     parser.add_argument(
         "--max-num-expansions",
@@ -107,27 +107,9 @@ def main() -> None:
     set_logger(args.verbose)
     logger.info(f"PID: {os.getpid()}")
     logger.info(args)
+    logger.warning("Using old_lean_bench")
 
     theorems, positions = get_theorems(args)
-    """
-    if args.use_gpu:
-        assert torch.cuda.is_available()
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
-
-    if args.model == "TransformerTacticGenerator":
-        tac_gen = TransformerTacticGenerator.load(
-            args.gen_ckpt_path, device, freeze=True
-        )
-    elif args.model == "RetrivalAugmentedTacticGenerator":
-        tac_gen = RetrivalAugmentedTacticGenerator(
-            args.gen_ckpt_path, args.ret_ckpt_path, device
-        )
-    else:
-        assert args.model == "GPT4TacticGenerator"
-        tac_gen = GPT4TacticGenerator()
-    """
 
     prover = DistributedProver(
         args.model,
