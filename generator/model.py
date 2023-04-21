@@ -775,7 +775,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                     for b_id in range(len(scores[batch_beam_idx])):
                         if b_id not in valid_byte_ids and scores[
                             batch_beam_idx, b_id
-                        ] < math.log(0.3):
+                        ] < math.log(0.2):
                             scores[batch_beam_idx, b_id] = -math.inf
                     # scores[batch_beam_idx].fill_(-math.inf)
                     """
