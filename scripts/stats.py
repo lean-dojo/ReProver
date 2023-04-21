@@ -1,11 +1,17 @@
 import sys
+from glob import glob
 
-num_total = num_correct = 0
 
-for line in open(sys.argv[1]):
-    if "SearchResult" in line:
-        num_total += 1
-        if "Proved" in line:
-            num_correct += 1
+for filename in glob(sys.argv[1]):
+    print(filename)
+    num_total = num_correct = 0
+    for line in open(filename):
+        if "SearchResult" in line:
+            num_total += 1
+            if "Proved" in line:
+                num_correct += 1
 
-print(f"{num_correct} / {num_total} = {num_correct / num_total}")
+    if num_total == 0:
+        print("N/A")
+    else:
+        print(f"{num_correct} / {num_total} = {num_correct / num_total}")
