@@ -394,7 +394,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             early_stopping=False,
             max_length=self.generator.max_seq_len,
         )
-        logger.info(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
+        logger.debug(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
 
         # Return the output.
         raw_output_text = self.generator.tokenizer.batch_decode(
@@ -422,6 +422,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         logger.debug(f"Predicted tactics: {str(tactics_with_scores)}")
         return tactics_with_scores
 
+    @torch.no_grad()
     def beam_search(
         self,
         state: List[str],
@@ -467,7 +468,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         past_key_values = None
 
         while True:
-            logger.debug(input_ids.size())
             decoder_input_ids = (
                 input_ids if past_key_values is None else input_ids[:, -1:]
             )
@@ -746,6 +746,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 if name_prefix is not None:
                     possible_suffixes = []
                     suffix_scores = []
+
                     for s, p in zip_strict(
                         self.premise_names[batch_beam_idx],
                         self.premise_scores[batch_beam_idx],
@@ -772,14 +773,10 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                     # TODOs: Using generator scores does not make sense for novel premises.
                     # TODOs: Let's try retrieved premises scores followed by softmax with temperature 0.5, followed by thresholding.
                     """
-                    valid_byte_ids = {
-                        s[0] + num_special_tokens for s in possible_suffixes
-                    }
-                    for b_id in range(len(scores[batch_beam_idx])):
-                        if b_id not in valid_byte_ids and scores[
-                            batch_beam_idx, b_id
-                        ] < math.log(0.2):
-                            scores[batch_beam_idx, b_id] = -math.inf
+                    mask_keep = scores[batch_beam_idx] >= math.log(0.2)
+                    for s in possible_suffixes:
+                        mask_keep[s[0] + num_special_tokens] = True
+                    scores[batch_beam_idx, ~mask_keep] = -math.inf
                     # scores[batch_beam_idx].fill_(-math.inf)
                     """
                     scores[
