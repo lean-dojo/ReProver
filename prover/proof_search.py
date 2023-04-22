@@ -609,7 +609,7 @@ class DistributedProver:
     ) -> None:
         gen_ckpt_path = to_path(gen_ckpt_path)
         ret_ckpt_path = to_path(ret_ckpt_path)
-        ray.init()
+        ray.init(num_cpus=num_cpus, num_gpus=num_gpus)
 
         assert num_gpus <= num_cpus
         if num_gpus == num_cpus:

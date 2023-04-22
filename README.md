@@ -3,7 +3,15 @@
 
 ## Requirements
 
+```bash
+conda create -n retrieval-augmented-prover python=3.9 ipython
+conda activate retrieval-augmented-prover
+conda install pytorch pytorch-cuda=11.8 -c pytorch -c nvidia
+pip install loguru tqdm deepspeed pytorch-lightning[extra] transformers openai
+```
+
 * Python dependencies in [retrieval-augmented-prover.yaml](./retrieval-augmented-prover.yaml)
+* LeanDojo and its cache
 * Append the root of this repo to the `PYTHONPATH` environment variable.
 * Download [the dataset](https://drive.google.com/file/d/1ogklwRbaVdXaD9asigc3qh6eD8kfF5S6/view?usp=share_link) and unzip it as `./data/lean_bench`
 

@@ -6,19 +6,16 @@ channels:
 dependencies:
   - python=3.9
   - ipython
-  - jupyter
   - loguru
   - tqdm
   - black
   - mypy
   - pytorch-cuda=11.7
   - pytorch
-  - graphviz
   - pip
   - pip:
     - deepspeed
     - pytorch-lightning[extra]
     - transformers
-    - datasets
     - tensorboard
     - openai
