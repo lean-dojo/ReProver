@@ -609,6 +609,21 @@ class DistributedProver:
     ) -> None:
         gen_ckpt_path = to_path(gen_ckpt_path)
         ret_ckpt_path = to_path(ret_ckpt_path)
+
+        self.distributed = num_cpus > 1
+        if not self.distributed:
+            tac_gen = create_tactic_generator(
+                model,
+                gen_ckpt_path,
+                ret_ckpt_path,
+                torch.device("cuda" if num_gpus > 0 else "cpu"),
+            )
+            tac_gen_config = TacticGeneratorConfig(tac_gen, None)
+            self.prover = BestFirstSearchProver(
+                tac_gen_config, timeout, max_num_expansions, num_sampled_tactics, debug
+            )
+            return
+
         ray.init(num_cpus=num_cpus, num_gpus=num_gpus)
 
         assert num_gpus <= num_cpus
@@ -694,6 +709,11 @@ class DistributedProver:
     def search_unordered(
         self, theorems: List[Theorem], positions: List[Pos]
     ) -> List[SearchResult]:
+        if not self.distributed:
+            return [
+                self.prover.search(thm, pos)
+                for thm, pos in zip_strict(theorems, positions)
+            ]
         # self.old_sigint = signal.signal(signal.SIGINT, self._exit_gracefully)
         # self.old_sigterm = signal.signal(signal.SIGTERM, self._exit_gracefully)
         try:

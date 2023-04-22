@@ -314,7 +314,9 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         device,
     ) -> None:
         super().__init__()
+        logger.debug(f"Loading the generator from {gen_ckpt}")
         self.generator = TransformerTacticGenerator.load(gen_ckpt, device, freeze=True)
+        logger.debug(f"Loading the retriever from {ret_ckpt}")
         self.retriever = PremiseRetriever.load(ret_ckpt, device, freeze=True)
 
         assert isinstance(self.generator.tokenizer, ByT5Tokenizer)
@@ -392,7 +394,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             early_stopping=False,
             max_length=self.generator.max_seq_len,
         )
-        logger.debug(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
+        logger.info(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
 
         # Return the output.
         raw_output_text = self.generator.tokenizer.batch_decode(
@@ -465,6 +467,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         past_key_values = None
 
         while True:
+            logger.debug(input_ids.size())
             decoder_input_ids = (
                 input_ids if past_key_values is None else input_ids[:, -1:]
             )
