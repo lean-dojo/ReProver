@@ -43,14 +43,6 @@ def remove_marks(s: str) -> str:
     return s.replace(MARK_START_SYMBOL, "").replace(MARK_END_SYMBOL, "")
 
 
-def to_path(p: Union[str, Path]) -> Path:
-    """Convert ``p`` to a :class:`Path` object."""
-    if isinstance(p, Path):
-        return p
-    else:
-        return Path(p)
-
-
 @dataclass
 class Context:
     """Contexts are "queries" in our retrieval setup."""
@@ -171,7 +163,7 @@ class Corpus:
 
     def __init__(self, jsonl_path: Union[str, Path]) -> None:
         """Construct a :class:`Corpus` object from a ``corpus.jsonl`` data file."""
-        jsonl_path = to_path(jsonl_path)
+        jsonl_path = Path(jsonl_path)
 
         dep_graph = nx.DiGraph()
         self.all_premises = []

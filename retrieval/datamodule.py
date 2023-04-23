@@ -17,7 +17,6 @@ from transformers import AutoTokenizer, ByT5Tokenizer
 from common import (
     Context,
     Corpus,
-    to_path,
     format_state,
     format_tactic,
     Example,
@@ -215,7 +214,7 @@ class RetrievalDataModule(pl.LightningDataModule):
         num_workers: int,
     ) -> None:
         super().__init__()
-        self.data_path = to_path(data_path)
+        self.data_path = Path(data_path)
         self.num_negatives = num_negatives
         self.batch_size = batch_size
         self.eval_batch_size = eval_batch_size

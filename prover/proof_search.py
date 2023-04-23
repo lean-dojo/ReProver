@@ -27,7 +27,7 @@ from typing import List, Optional, Tuple, Union
 from lean_dojo import ProofFinished, TacticState, TacticError
 
 
-from common import zip_strict, to_path
+from common import zip_strict
 from generator.model import (
     TacticGenerator,
     TransformerTacticGenerator,
@@ -607,8 +607,8 @@ class DistributedProver:
         num_sampled_tactics: int,
         debug: Optional[bool] = False,
     ) -> None:
-        gen_ckpt_path = to_path(gen_ckpt_path)
-        ret_ckpt_path = to_path(ret_ckpt_path)
+        gen_ckpt_path = Path(gen_ckpt_path)
+        ret_ckpt_path = Path(ret_ckpt_path)
 
         self.distributed = num_cpus > 1
         if not self.distributed:

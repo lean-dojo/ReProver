@@ -7,7 +7,7 @@ import pytorch_lightning as pl
 from typing import Optional, Union, List
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer, ByT5Tokenizer
-from common import format_state, format_tactic, to_path, Example, Batch
+from common import format_state, format_tactic, Example, Batch
 
 
 class GeneratorDataset(Dataset):
@@ -95,7 +95,7 @@ class GeneratorDataModule(pl.LightningDataModule):
         num_workers: int,
     ) -> None:
         super().__init__()
-        self.data_path = to_path(data_path)
+        self.data_path = Path(data_path)
         self.batch_size = batch_size
         self.max_seq_len = max_seq_len
         self.num_workers = num_workers
