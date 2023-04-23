@@ -553,7 +553,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                                 for m in find_marks(tac, include_symbols=True)
                             )
                         )
-                        l = 1 + len(tac)
                         beam_hyp.add(
                             input_ids[batch_beam_idx].clone(), next_score.item(), l
                         )
@@ -706,7 +705,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 ):
                     # Prevent MARK_END_SYMBOL from being generated.
                     scores[
-                        batch_beam_idx, self.mark_end_ids[-1] + num_special_tokens
+                       batch_beam_idx, self.mark_end_ids[-1] + num_special_tokens
                     ] = -math.inf
 
                 if tactic_prefix.endswith(self.mark_start_ids):  # <a> detected.
@@ -740,6 +739,8 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 elif tactic_prefix.endswith(self.mark_end_ids):
                     assert self._in_retrival_mode(batch_beam_idx)
                     self._update_retrieved_premises(batch_beam_idx, None, None)
+
+                # continue
 
                 name_prefix = self._find_open_mark(tactic_prefix)
 
