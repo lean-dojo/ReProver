@@ -173,6 +173,11 @@ class PremiseRetriever(pl.LightningModule):
 
         self.corpus = checkpoint["corpus"]
 
+        # TODO: Remove this after the next release.
+        if not hasattr(self.corpus, "imported_premises_cache"):
+            self.corpus.imported_premises_cache = {}
+            self.corpus.fill_cache()
+
         if "state_dict" in checkpoint:
             state_dict = checkpoint["state_dict"]
             if "corpus_embeddings" in checkpoint["state_dict"]:

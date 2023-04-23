@@ -443,12 +443,25 @@ class BestFirstSearchProver:
 
 
 def create_tactic_generator(
-    model: str, gen_ckpt_path: Path, ret_ckpt_path: Path, device, length_penalty: Optional[float] = None, temperature: Optional[float] = None
+    model: str,
+    gen_ckpt_path: Path,
+    ret_ckpt_path: Path,
+    device,
+    length_penalty: Optional[float] = None,
+    temperature: Optional[float] = None,
+    retrieval_weight: Optional[float] = None,
 ):
     if model == "TransformerTacticGenerator":
         return TransformerTacticGenerator.load(gen_ckpt_path, device, freeze=True)
     elif model == "RetrivalAugmentedTacticGenerator":
-        return RetrivalAugmentedTacticGenerator(gen_ckpt_path, ret_ckpt_path, device, length_penalty, temperature)
+        return RetrivalAugmentedTacticGenerator(
+            gen_ckpt_path,
+            ret_ckpt_path,
+            device,
+            length_penalty,
+            temperature,
+            retrieval_weight,
+        )
     else:
         assert model == "GPT4TacticGenerator"
         return GPT4TacticGenerator()
@@ -602,6 +615,7 @@ class DistributedProver:
         ret_ckpt_path: Union[str, Path],
         length_penalty: float,
         temperature: float,
+        retrieval_weight: float,
         num_cpus: int,
         num_gpus: int,
         timeout: int,
@@ -621,6 +635,7 @@ class DistributedProver:
                 torch.device("cuda" if num_gpus > 0 else "cpu"),
                 length_penalty,
                 temperature,
+                retrieval_weight,
             )
             tac_gen_config = TacticGeneratorConfig(tac_gen, None)
             self.prover = BestFirstSearchProver(

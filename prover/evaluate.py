@@ -80,6 +80,7 @@ def main() -> None:
     )
     parser.add_argument("--length-penalty", type=float, default=-0.5)
     parser.add_argument("--temperature", type=float, default=0.5)
+    parser.add_argument("--retrieval-weight", type=float, default=0.0)
     parser.add_argument(
         "--num-sampled-tactics",
         type=int,
@@ -119,6 +120,7 @@ def main() -> None:
         args.ret_ckpt_path,
         args.length_penalty,
         args.temperature,
+        args.retrieval_weight,
         num_cpus=args.num_cpus,
         num_gpus=args.num_gpus,
         timeout=args.timeout,

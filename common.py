@@ -16,7 +16,7 @@ from pytorch_lightning.utilities.deepspeed import (
 from transformers import get_cosine_schedule_with_warmup
 from deepspeed.ops.adam import FusedAdam, DeepSpeedCPUAdam
 from pytorch_lightning.strategies.deepspeed import DeepSpeedStrategy
-from typing import Optional, List, Union, Dict, Any, Tuple, Generator
+from typing import Optional, List, Union, Dict, Any, Tuple, Set
 
 
 Example = Dict[str, Any]
@@ -111,7 +111,7 @@ class Premise:
 
     def __hash__(self) -> int:
         return (
-            hash(self.path)
+            hash(str(self.path))
             ^ hash(self.full_name)
             ^ hash(self.start.line_nb)
             ^ hash(self.start.column_nb)
@@ -187,6 +187,9 @@ class Corpus:
 
         assert nx.is_directed_acyclic_graph(dep_graph)
         self.transitive_dep_graph = nx.transitive_closure_dag(dep_graph)
+        
+        self.imported_premises_cache = {}
+        self.fill_cache()
 
     def _get_file(self, path: Path) -> File:
         return self.transitive_dep_graph.nodes[path]["file"]
@@ -196,19 +199,15 @@ class Corpus:
 
     @property
     def files(self) -> List[File]:
-        return [self._get_file(p) for p in self.transitive_dep_graph.dep_graph.nodes]
+        return [self._get_file(p) for p in self.transitive_dep_graph.nodes]
 
     def get_dependencies(self, path: Union[str, Path]) -> List[Path]:
         """Return a list of (direct and indirect) dependencies of the file ``path``."""
-        if isinstance(path, str):
-            path = Path(path)
-        return list(self.transitive_dep_graph.successors(path))
+        return list(self.transitive_dep_graph.successors(Path(path)))
 
     def get_premises(self, path: Union[str, Path]) -> List[Premise]:
         """Return a list of premises defined in the file ``path``."""
-        if isinstance(path, str):
-            path = Path(path)
-        return self._get_file(path).premises
+        return self._get_file(Path(path)).premises
 
     def num_premises(self, path: Union[str, Path]) -> int:
         """Return the number of premises defined in the file ``path``."""
@@ -219,8 +218,7 @@ class Corpus:
 
         Return None if no such premise can be found.
         """
-        if isinstance(path, str):
-            path = Path(path)
+        path = Path(path)
 
         for p in self.get_premises(path):
             assert p.path == path
@@ -229,31 +227,38 @@ class Corpus:
 
         return None
 
-    def iter_accessible_premises(
+    def fill_cache(self) -> None:
+        for path in self.transitive_dep_graph.nodes:
+            self.get_imported_premises(path)
+
+    def get_imported_premises(self, path: Union[str, Path]) -> List[Premise]:
+        """Return a list of premises imported in file ``path``. The result is cached.
+        """
+        path = Path(path)
+        
+        premises = self.imported_premises_cache.get(path, None)
+        if premises is not None:
+            return premises
+        
+        premises = []
+        for p in self.transitive_dep_graph.successors(path):
+            premises.extend(self._get_file(p).premises)
+        self.imported_premises_cache[path] = premises
+        return premises
+
+    def get_accessible_premises(
         self, path: Union[str, Path], pos: Pos
-    ) -> Generator[Premise, None, None]:
+    ) -> Set[Premise]:
         """Return an iterator of premises accessible at position ``pos`` in file ``path``,
         i.e., all premises defined in the (transitively) imported files or earlier in the same file.
         """
-        if isinstance(path, str):
-            path = Path(path)
+        path = Path(path)
+        premises = set()
         for p in self.get_premises(path):
             if p.end < pos:
-                yield p
-        for p in self.transitive_dep_graph.successors(path):
-            yield from self._get_file(p).premises
-
-    def get_accessible_premise_indexes(
-        self, path: Union[str, Path], pos: Pos
-    ) -> List[int]:
-        if isinstance(path, str):
-            path = Path(path)
-        return {
-            i
-            for i, prem in enumerate(self.all_premises)
-            if (prem.path == path and prem.end < pos)
-            or self.transitive_dep_graph.has_edge(path, prem.path)
-        }
+                premises.add(p)
+        premises.update(self.get_imported_premises(path))
+        return premises
 
     def get_nearest_premises(
         self,
@@ -280,9 +285,7 @@ class Corpus:
         scores = [[] for _ in batch_context]
 
         for j, (ctx, idxs) in enumerate(zip(batch_context, idxs_batch)):
-            accessible_premises = set(
-                self.iter_accessible_premises(ctx.path, ctx.theorem_pos)
-            )
+            accessible_premises = self.get_accessible_premises(ctx.path, ctx.theorem_pos)
             assert len(accessible_premises) >= k
             for i in idxs:
                 p = self.all_premises[i]
