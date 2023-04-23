@@ -255,7 +255,7 @@ class Corpus:
         path = Path(path)
         premises = set()
         for p in self.get_premises(path):
-            if p.end < pos:
+            if p.end <= pos:
                 premises.add(p)
         premises.update(self.get_imported_premises(path))
         return premises
