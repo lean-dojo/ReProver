@@ -51,7 +51,7 @@ def main() -> None:
     parser.add_argument(
         "--data-path",
         type=str,
-        default="data/old_lean_bench/random",
+        default="data/lean_bench/random",
     )
     parser.add_argument("--file-path", type=str)
     parser.add_argument("--full-name", type=str)
@@ -64,18 +64,22 @@ def main() -> None:
             "RetrivalAugmentedTacticGenerator",
             "GPT4TacticGenerator",
         ],
-        default="TransformerTacticGenerator",
+        default="RetrivalAugmentedTacticGenerator",
     )
     parser.add_argument(
         "--gen-ckpt-path",
         type=str,
         help="Checkpoint of the tactic generator.",
+        default="lightning_logs/generator_random/checkpoints/last.ckpt",
     )
     parser.add_argument(
         "--ret-ckpt-path",
         type=str,
         help="Checkpoint of the premise retriever.",
+        default="lightning_logs/retriever_random/checkpoints/last.ckpt",
     )
+    parser.add_argument("--length-penalty", type=float, default=-0.5)
+    parser.add_argument("--temperature", type=float, default=0.5)
     parser.add_argument(
         "--num-sampled-tactics",
         type=int,
@@ -87,8 +91,8 @@ def main() -> None:
     parser.add_argument(
         "--timeout",
         type=int,
-        default=600,
-        help="Maximum number of seconds the proof search can take (Default: 600).",
+        default=1200,
+        help="Maximum number of seconds the proof search can take (Default: 1200).",
     )
     parser.add_argument(
         "--max-num-expansions",
@@ -106,7 +110,6 @@ def main() -> None:
     set_logger(args.verbose)
     logger.info(f"PID: {os.getpid()}")
     logger.info(args)
-    logger.warning("Using old_lean_bench")
 
     theorems, positions = get_theorems(args)
 
@@ -114,6 +117,8 @@ def main() -> None:
         args.model,
         args.gen_ckpt_path,
         args.ret_ckpt_path,
+        args.length_penalty,
+        args.temperature,
         num_cpus=args.num_cpus,
         num_gpus=args.num_gpus,
         timeout=args.timeout,

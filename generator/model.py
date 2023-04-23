@@ -311,12 +311,16 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         gen_ckpt: Union[str, Path],
         ret_ckpt: Union[str, Path],
         device,
+        length_penalty: float,
+        temperature: float,
     ) -> None:
         super().__init__()
         logger.debug(f"Loading the generator from {gen_ckpt}")
         self.generator = TransformerTacticGenerator.load(gen_ckpt, device, freeze=True)
         logger.debug(f"Loading the retriever from {ret_ckpt}")
         self.retriever = PremiseRetriever.load(ret_ckpt, device, freeze=True)
+        self.length_penalty = length_penalty
+        self.temperature = temperature
 
         assert isinstance(self.generator.tokenizer, ByT5Tokenizer)
         num_special_tokens = self.generator.tokenizer._num_special_tokens
@@ -336,6 +340,12 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
     @property
     def device(self):
         return self.generator.device
+
+    @property
+    def tokenizer(self):
+        assert isinstance(self.generator.tokenizer, ByT5Tokenizer)
+        assert isinstance(self.retriever.tokenizer, ByT5Tokenizer)
+        return self.generator.tokenizer
 
     def generate(
         self,
@@ -359,7 +369,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
     ) -> List[List[Tuple[str, float]]]:
         logger.debug(state)
 
-        tokenized_state = self.generator.tokenizer(
+        tokenized_state = self.tokenizer(
             state,
             padding="longest",
             max_length=self.generator.max_seq_len,
@@ -370,16 +380,11 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         state_mask = tokenized_state.attention_mask.to(self.device).repeat_interleave(
             num_samples, dim=0
         )
-
-        if len(state_ids) >= self.generator.max_seq_len:
-            logger.warning(f"The tactic_state is truncated: {state}")
-
         encoder_outputs = self.generator.t5.encoder(
             input_ids=state_ids.repeat_interleave(num_samples, dim=0),
             attention_mask=state_mask,
         )
 
-        time_start = monotonic()
         # TODO: Make `length_penalty` a parameter.
         sequences, scores = self.beam_search(
             state,
@@ -389,11 +394,10 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             encoder_outputs,
             state_mask,
             num_samples,
-            length_penalty=-0.5,
+            length_penalty=self.length_penalty,
             early_stopping=False,
             max_length=self.generator.max_seq_len,
         )
-        logger.debug(f"Beam search finished in {monotonic() - time_start:.2f} seconds.")
 
         # Return the output.
         raw_output_text = self.generator.tokenizer.batch_decode(
@@ -403,22 +407,22 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         logger.debug(
             f"Raw predicted tactics: {str(list(zip(raw_output_text, raw_scores)))}"
         )
-        batch_size = len(state)
         tactics_with_scores = []
 
-        for i in range(batch_size):
+        for i in range(len(state)):
             raw_output_text_i = raw_output_text[i * num_samples : (i + 1) * num_samples]
             raw_scores_i = raw_scores[i * num_samples : (i + 1) * num_samples]
             output_text = []
             output_score = []
+            
             for t, s in zip_strict(raw_output_text_i, raw_scores_i):
                 t = remove_marks(t)
                 if t not in output_text:
                     output_text.append(t)
                     output_score.append(s)
+                    
             tactics_with_scores.append(list(zip_strict(output_text, output_score)))
 
-        logger.debug(f"Predicted tactics: {str(tactics_with_scores)}")
         return tactics_with_scores
 
     @torch.no_grad()
@@ -441,13 +445,9 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
         device = self.device
         pad_token_id = self.generator.t5.config.pad_token_id
         eos_token_id = self.generator.t5.config.eos_token_id
+        decoder_start_token_id = self.generator.t5.config.decoder_start_token_id
 
-        input_ids = torch.full(
-            (batch_beam_size, 1),
-            fill_value=self.generator.t5.config.decoder_start_token_id,
-            dtype=torch.long,
-            device=device,
-        )
+        input_ids = torch.full((batch_beam_size, 1), fill_value=decoder_start_token_id, device=device)
 
         # Initialise score of first beam with 0 and the rest with -1e9. This makes sure that only tokens
         # of the first beam are considered to avoid sampling the exact same tokens across all beams.
@@ -474,7 +474,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 decoder_input_ids=decoder_input_ids,
                 encoder_outputs=encoder_outputs,
                 attention_mask=attention_mask,
-                # decoder_attention_mas =
                 return_dict=True,
                 past_key_values=past_key_values,
                 use_cache=True,
@@ -493,8 +492,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                 next_token_scores,
             )
             # next_scores_processed = next_token_scores
-            # next_scores_processed = logits_processor(input_ids, next_scores)
-            # renormalize_logits=True,
             next_scores = next_scores_processed + beam_scores.unsqueeze(-1)
 
             # Sample 2 next tokens for each beam (so we have some spare tokens and match output of beam search)
@@ -552,7 +549,6 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
                                 for m in find_marks(tac, include_symbols=True)
                             )
                         )
-                        l = 1 + len(tac)
                         beam_hyp.add(
                             input_ids[batch_beam_idx].clone(), next_score.item(), l
                         )
@@ -632,11 +628,14 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
             sequences[i, len(seq)] = eos_token_id
             scores[i] = s
 
+        logger.debug(f"Beam search finished in {monotonic() - self.time_start:.2f} s")
+        logger.debug(f"Retrieval time: {self.time_retrieval:.2f} s")
         return sequences, scores
 
     def _init_retrieved_premises(self, batch_beam_size: int):
         self.premise_names = [None for _ in range(batch_beam_size)]
         self.premise_scores = [None for _ in range(batch_beam_size)]
+        self.time_start = monotonic()
         self.time_retrieval = 0.0
 
     def _reorder_retrieved_premises(self, next_beam_indices: List[int]) -> None:

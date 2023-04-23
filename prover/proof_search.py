@@ -357,7 +357,7 @@ class BestFirstSearchProver:
 
     def _run_tactic(self, node: InternalNode, tactic: str, logprob: float) -> Edge:
         # Must separately record time here, because caching might return a higher time
-        logger.debug(f"Trying a tactic: {tactic}")
+        # logger.debug(f"Trying a tactic: {tactic}")
         # if tactic.startswith("{"):
         #    assert node.state.num_goals > 1
         t0 = time.monotonic()
@@ -443,12 +443,12 @@ class BestFirstSearchProver:
 
 
 def create_tactic_generator(
-    model: str, gen_ckpt_path: Path, ret_ckpt_path: Path, device
+    model: str, gen_ckpt_path: Path, ret_ckpt_path: Path, device, length_penalty: Optional[float] = None, temperature: Optional[float] = None
 ):
     if model == "TransformerTacticGenerator":
         return TransformerTacticGenerator.load(gen_ckpt_path, device, freeze=True)
     elif model == "RetrivalAugmentedTacticGenerator":
-        return RetrivalAugmentedTacticGenerator(gen_ckpt_path, ret_ckpt_path, device)
+        return RetrivalAugmentedTacticGenerator(gen_ckpt_path, ret_ckpt_path, device, length_penalty, temperature)
     else:
         assert model == "GPT4TacticGenerator"
         return GPT4TacticGenerator()
@@ -600,6 +600,8 @@ class DistributedProver:
         model: str,
         gen_ckpt_path: Union[str, Path],
         ret_ckpt_path: Union[str, Path],
+        length_penalty: float,
+        temperature: float,
         num_cpus: int,
         num_gpus: int,
         timeout: int,
@@ -617,6 +619,8 @@ class DistributedProver:
                 gen_ckpt_path,
                 ret_ckpt_path,
                 torch.device("cuda" if num_gpus > 0 else "cpu"),
+                length_penalty,
+                temperature,
             )
             tac_gen_config = TacticGeneratorConfig(tac_gen, None)
             self.prover = BestFirstSearchProver(
