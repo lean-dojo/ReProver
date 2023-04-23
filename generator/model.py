@@ -23,7 +23,6 @@ from common import (
     get_optimizers,
     remove_marks,
     load_checkpoint,
-    to_path,
     zip_strict,
     find_marks,
     MARK_START_SYMBOL,
@@ -110,7 +109,7 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
     def load(
         cls, ckpt_path: Union[str, Path], device, freeze: bool
     ) -> "TransformerTacticGenerator":
-        return load_checkpoint(cls, to_path(ckpt_path), device, freeze)
+        return load_checkpoint(cls, Path(ckpt_path), device, freeze)
 
     def generate(
         self,

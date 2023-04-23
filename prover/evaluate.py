@@ -1,7 +1,6 @@
 import pdb
 import os
 import json
-import torch
 import random
 import pickle
 import hashlib

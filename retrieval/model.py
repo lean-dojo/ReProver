@@ -18,7 +18,6 @@ from common import (
     Corpus,
     get_optimizers,
     load_checkpoint,
-    to_path,
     zip_strict,
     MARK_START_SYMBOL,
 )
@@ -60,7 +59,7 @@ class PremiseRetriever(pl.LightningModule):
     def load(
         cls, ckpt_path: Union[str, Path], device, freeze: bool
     ) -> "PremiseRetriever":
-        return load_checkpoint(cls, to_path(ckpt_path), device, freeze)
+        return load_checkpoint(cls, Path(ckpt_path), device, freeze)
 
     @property
     def embedding_size(self) -> int:
@@ -259,7 +258,7 @@ class PremiseRetriever(pl.LightningModule):
                 msg = "\n\n".join(
                     [f"{j}. {p.serialize()}" for j, p in enumerate(premises)]
                 )
-                msg = f"{premise_gt in premises}\nGround truth:\n `{premise_gt.serialize()}`\n Retrieved:\n```\n{msg}\n```"
+                msg = f"{premise_gt in premises}\n\nGround truth:\n\n`{premise_gt.serialize()}`\n\n Retrieved:\n\n```\n{msg}\n```"
                 tb.add_text(f"premises_val", msg, self.global_step)
 
             for j in range(self.num_retrieved):
