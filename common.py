@@ -50,14 +50,12 @@ class Context:
     path: Path
     theorem_full_name: str
     theorem_pos: Pos
-    tactic_prefix: str
     state: str
 
     def __post_init__(self) -> None:
         assert isinstance(self.path, Path)
         assert isinstance(self.theorem_full_name, str)
         assert isinstance(self.theorem_pos, Pos)
-        assert isinstance(self.tactic_prefix, str)
         assert (
             isinstance(self.state, str)
             and "⊢" in self.state
@@ -68,7 +66,7 @@ class Context:
     def serialize(self) -> str:
         """Serialize the context into a string for Transformers."""
         # TODO: Make sure the goal is not truncated.
-        return f"$TACTIC$ = {self.tactic_prefix} $STATE$ = {self.state}"
+        return self.state
 
 
 @dataclass
@@ -328,6 +326,8 @@ def format_tactic(annot_tac: str, provenances) -> str:
 def format_state(s: str) -> str:
     # TODO: Try putting the goal before the context.
     assert "⊢" in s
+    #if s.count("⊢") > 1:
+    #    logger.info(s)
     m = re.match(r"\d+ goals", s)
     if m is None:
         return s

@@ -26,7 +26,7 @@ trainer:
         mode: max
     - class_path: pytorch_lightning.callbacks.EarlyStopping
       init_args:
-        monitor: Recall@1_val
+        monitor: Recall@10_val
         patience: 3
         mode: max
         verbose: true
@@ -35,7 +35,7 @@ model:
   model_name: google/byt5-small
   lr: 1e-4
   warmup_steps: 2000
-  num_retrieved: 10
+  num_retrieved: 100
 
 data:
   data_path: data/lean_bench/random/

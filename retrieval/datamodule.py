@@ -55,34 +55,38 @@ class RetrievalDataset(Dataset):
             deps = self.corpus.get_dependencies(file_path)
 
             for tac in thm["traced_tactics"]:
-                annot_tac, provenances = tac["annotated_tactic"]
-                marks = find_marks(annot_tac, include_symbols=False)
+                _, provenances = tac["annotated_tactic"]
+                all_pos_premises = set()
 
-                for i, (m, prov) in enumerate(zip(marks, provenances)):
+                for prov in provenances:
                     def_path = Path(prov["def_path"])
                     assert def_path == file_path or def_path in deps
-                    pos_premise = self.corpus.locate_premise(
-                        def_path, Pos(*prov["def_pos"])
-                    )
-                    if pos_premise is None:
-                        # Discard invalid premises.
+                    p = self.corpus.locate_premise(def_path, Pos(*prov["def_pos"]))
+                    if p is None:  # Cannot find the premise.
                         num_discarded += 1
-                    else:
-                        tactic_prefix = format_tactic(
-                            annot_tac[: m.start()], provenances[:i]
-                        )
-                        state = format_state(tac["state_before"])
-                        context = Context(
-                            file_path,
-                            thm["full_name"],
-                            Pos(*thm["start"]),
-                            tactic_prefix,
-                            state,
-                        )
+                        continue
+                    all_pos_premises.add(p)
+
+                if len(all_pos_premises) == 0:
+                    continue
+
+                all_pos_premises = list(all_pos_premises)
+                state = format_state(tac["state_before"])
+                context = Context(
+                    file_path, thm["full_name"], Pos(*thm["start"]), state
+                )
+
+                if not self.is_train:
+                    data.append(
+                        {"context": context, "all_pos_premises": all_pos_premises}
+                    )
+                else:
+                    for pos_premise in all_pos_premises:
                         data.append(
                             {
                                 "context": context,
                                 "pos_premise": pos_premise,
+                                "all_pos_premises": all_pos_premises,
                             }
                         )
 
@@ -131,7 +135,7 @@ class RetrievalDataset(Dataset):
     def collate(self, examples: List[Example]) -> Batch:
         batch = {}
 
-        # Tokenize the context and positive premise.
+        # Tokenize the context.
         context = [ex["context"] for ex in examples]
         tokenized_context = self.tokenizer(
             [c.serialize() for c in context],
@@ -140,40 +144,38 @@ class RetrievalDataset(Dataset):
             truncation=True,
             return_tensors="pt",
         )
-        pos_premise = [ex["pos_premise"] for ex in examples]
-        tokenized_pos_premise = self.tokenizer(
-            [p.serialize() for p in pos_premise],
-            padding="longest",
-            max_length=self.max_seq_len,
-            truncation=True,
-            return_tensors="pt",
-        )
         batch["context"] = context
         batch["context_ids"] = tokenized_context.input_ids
         batch["context_mask"] = tokenized_context.attention_mask
-        batch["pos_premise"] = pos_premise
-        batch["pos_premise_ids"] = tokenized_pos_premise.input_ids
-        batch["pos_premise_mask"] = tokenized_pos_premise.attention_mask
 
-        # Tokenize and label the (potentially) negative premises.
+        # Tokenize the label and premises.
         if self.is_train:
+            pos_premise = [ex["pos_premise"] for ex in examples]
+            tokenized_pos_premise = self.tokenizer(
+                [p.serialize() for p in pos_premise],
+                padding="longest",
+                max_length=self.max_seq_len,
+                truncation=True,
+                return_tensors="pt",
+            )
+            batch["pos_premise"] = pos_premise
+            batch["pos_premise_ids"] = tokenized_pos_premise.input_ids
+            batch["pos_premise_mask"] = tokenized_pos_premise.attention_mask
+
             batch_size = len(examples)
             label = torch.zeros(batch_size, batch_size * (1 + self.num_negatives))
 
-            # TODO: What if multiple premises are all valid? E.g., rw [X ,Y]
             # Check if one's negative is another's positive
             for j in range(batch_size):
-                pos_premise = examples[j]["pos_premise"]
+                all_pos_premises = examples[j]["all_pos_premises"]
                 for k in range(batch_size * (1 + self.num_negatives)):
                     if k < batch_size:
-                        label[j, k] = float(pos_premise == examples[k]["pos_premise"])
+                        pos_premise_k = examples[k]["pos_premise"]
                     else:
-                        label[j, k] = float(
-                            pos_premise
-                            == examples[k % batch_size]["neg_premises"][
-                                k // batch_size - 1
-                            ]
-                        )
+                        pos_premise_k = examples[k % batch_size]["neg_premises"][
+                            k // batch_size - 1
+                        ]
+                    label[j, k] = float(pos_premise_k in all_pos_premises)
 
             batch["label"] = label
             batch["neg_premises"] = []
@@ -278,6 +280,7 @@ if __name__ == "__main__":
         num_negatives=3,
         model_name="google/byt5-small",
         batch_size=8,
+        eval_batch_size=64,
         max_seq_len=1024,
         num_workers=8,
     )
@@ -289,6 +292,7 @@ if __name__ == "__main__":
     ):
         if i == 0:
             print(data_batch)
+        print("context: ", data_batch["context_ids"].size())
         print("pos: ", data_batch["pos_premise_ids"].size())
         for ids in data_batch["neg_premises_ids"]:
             print("neg:", ids.size())

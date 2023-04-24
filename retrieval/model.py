@@ -53,7 +53,6 @@ class PremiseRetriever(pl.LightningModule):
             self.embeddings_staled = True
 
         self.validation_step_outputs = []
-        # TODO: Do we need re-ranking?
 
     @classmethod
     def load(
@@ -166,17 +165,7 @@ class PremiseRetriever(pl.LightningModule):
         checkpoint["corpus"] = self.corpus
 
     def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        # This is to keep backward compatibility.
-        if "corpus" not in checkpoint:
-            assert self.embeddings_staled
-            return
-
         self.corpus = checkpoint["corpus"]
-
-        # TODO: Remove this after the next release.
-        if not hasattr(self.corpus, "imported_premises_cache"):
-            self.corpus.imported_premises_cache = {}
-            self.corpus.fill_cache()
 
         if "state_dict" in checkpoint:
             state_dict = checkpoint["state_dict"]
@@ -205,7 +194,7 @@ class PremiseRetriever(pl.LightningModule):
                 outputs.append(
                     {
                         "context": context,
-                        "pos_premise": pos_premise,
+                        "all_pos_premises": pos_premise,
                         "retrieved_premises": retrieved_premises,
                         "scores": scores,
                     }
@@ -253,38 +242,54 @@ class PremiseRetriever(pl.LightningModule):
 
         # Evaluation & logging.
         recall = [[] for _ in range(self.num_retrieved)]
+        MRR = []
         tb = self.logger.experiment
 
-        for i, (premise_gt, premises) in enumerate(
-            zip(batch["pos_premise"], retrieved_premises)
+        for i, (all_pos_premises, premises) in enumerate(
+            zip(batch["all_pos_premises"], retrieved_premises)
         ):
             # Only log the first example in the batch.
             if i == 0:
-                msg = "\n\n".join(
+                msg_gt = "\n\n".join(
+                    [p.serialize() for p in all_pos_premises]
+                )
+                msg_retrieved = "\n\n".join(
                     [f"{j}. {p.serialize()}" for j, p in enumerate(premises)]
                 )
-                msg = f"{premise_gt in premises}\n\nGround truth:\n\n`{premise_gt.serialize()}`\n\n Retrieved:\n\n```\n{msg}\n```"
+                TP = len(set(premises).intersection(all_pos_premises))
+                r = float(TP) / len(all_pos_premises)
+                msg = f"Recall@{self.num_retrieved}: {r}\n\nGround truth:\n\n`{msg_gt}`\n\n Retrieved:\n\n```\n{msg_retrieved}\n```"
                 tb.add_text(f"premises_val", msg, self.global_step)
 
+            all_pos_premises = set(all_pos_premises)
+            first_match_found = False
+
             for j in range(self.num_retrieved):
-                if premise_gt in premises[: (j + 1)]:
-                    recall[j].append(1.0)
-                else:
-                    recall[j].append(0.0)
+                TP = len(all_pos_premises.intersection(premises[: (j + 1)]))
+                recall[j].append(float(TP) / len(all_pos_premises))
+                if premises[j] in all_pos_premises and not first_match_found:
+                    MRR.append(1.0 / j)
+                    first_match_found = True
+            if not first_match_found:
+                MRR.append(0.0)
 
         recall = [100 * np.mean(_) for _ in recall]
 
         for j in range(self.num_retrieved):
             self.log(
-                f"Recall@{j+1}_val",
+                f"Recall@{j+1}_val (%)",
                 recall[j],
                 on_epoch=True,
                 sync_dist=True,
                 batch_size=len(batch),
             )
 
+        self.log(
+            "MRR", np.mean(MRR), on_epoch=True, sync_dist=True, batch_size=len(batch)
+        )
+
         self.validation_step_outputs.append(
-            (batch["context"], batch["pos_premise"], retrieved_premises, scores)
+            (batch["context"], batch["all_pos_premises"], retrieved_premises, scores)
         )
 
     def configure_optimizers(self) -> Dict[str, Any]:
@@ -302,6 +307,7 @@ class PremiseRetriever(pl.LightningModule):
         k: int,
     ) -> Tuple[List[Premise], List[float]]:
         # """Retrieve ``k`` premises from ``corpus`` using ``state`` and ``tactic_prefix`` as context."""
+        raise NotImplementedError
         assert tactic_prefix.endswith(MARK_START_SYMBOL)
         ctx = Context(file_name, theorem_full_name, theorem_pos, tactic_prefix, state)
         ctx_tokens = self.tokenizer(
