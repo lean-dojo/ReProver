@@ -474,6 +474,9 @@ class CpuProver(BestFirstSearchProver):
         model: str,
         gen_ckpt_path: Path,
         ret_ckpt_path: Path,
+        length_penalty: float,
+        temperature: float,
+        retrieval_weight: float,
         external_config: Optional[ExternalTacticGeneratorConfig],
         timeout: int,
         max_num_expansions: int,
@@ -484,7 +487,13 @@ class CpuProver(BestFirstSearchProver):
             tac_gen = None
         else:
             tac_gen = create_tactic_generator(
-                model, gen_ckpt_path, ret_ckpt_path, torch.device("cpu")
+                model,
+                gen_ckpt_path,
+                ret_ckpt_path,
+                torch.device("cpu"),
+                length_penalty,
+                temperature,
+                retrieval_weight,
             )
         tac_gen_config = TacticGeneratorConfig(tac_gen, external_config)
         super().__init__(
@@ -503,6 +512,9 @@ class GpuProver(BestFirstSearchProver):
         model: str,
         gen_ckpt_path: Path,
         ret_ckpt_path: Path,
+        length_penalty: float,
+        temperature: float,
+        retrieval_weight: float,
         external_config: Optional[ExternalTacticGeneratorConfig],
         timeout: int,
         max_num_expansions: int,
@@ -513,7 +525,13 @@ class GpuProver(BestFirstSearchProver):
             tac_gen = None
         else:
             tac_gen = create_tactic_generator(
-                model, gen_ckpt_path, ret_ckpt_path, torch.device("cuda")
+                model,
+                gen_ckpt_path,
+                ret_ckpt_path,
+                torch.device("cuda"),
+                length_penalty,
+                temperature,
+                retrieval_weight,
             )
         tac_gen_config = TacticGeneratorConfig(tac_gen, external_config)
         super().__init__(
@@ -541,9 +559,17 @@ class GpuTacticGenerator:
         self.requests_queue = requests_queue
         self.batch_size = batch_size
 
-    def initialize(self):
+    def initialize(
+        self, length_penalty: float, temperature: float, retrieval_weight: float
+    ):
         self.tac_gen = create_tactic_generator(
-            self.model, self.gen_ckpt_path, self.ret_ckpt_path, torch.device("cuda")
+            self.model,
+            self.gen_ckpt_path,
+            self.ret_ckpt_path,
+            torch.device("cuda"),
+            length_penalty,
+            temperature,
+            retrieval_weight,
         )
 
     def run(self) -> None:
@@ -656,6 +682,9 @@ class DistributedProver:
                     model,
                     gen_ckpt_path,
                     ret_ckpt_path,
+                    length_penalty,
+                    temperature,
+                    retrieval_weight,
                     external_config=None,
                     timeout=timeout,
                     max_num_expansions=max_num_expansions,
@@ -672,6 +701,9 @@ class DistributedProver:
                     model,
                     gen_ckpt_path,
                     ret_ckpt_path,
+                    length_penalty,
+                    temperature,
+                    retrieval_weight,
                     external_config=None,
                     timeout=timeout,
                     max_num_expansions=max_num_expansions,
