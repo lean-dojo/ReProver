@@ -324,15 +324,32 @@ def format_tactic(annot_tac: str, provenances) -> str:
 
 
 def format_state(s: str) -> str:
-    # TODO: Try putting the goal before the context.
-    assert "⊢" in s
-    #if s.count("⊢") > 1:
-    #    logger.info(s)
     m = re.match(r"\d+ goals", s)
-    if m is None:
+    if m is not None:
+        s = s[m.end() :].strip()
+        
+    num_goals = s.count("⊢")
+    assert num_goals >= 1
+    if num_goals == 1:
         return s
-    else:
-        return s[m.end() :].strip()
+    
+    local_contexts = []
+    goals = []
+    
+    for ss in s.split("\n\n"):
+        ctx, g = ss.split("⊢")
+        local_contexts.append(ctx.strip())
+        goals.append(g.strip())
+        
+    assert len(goals) == num_goals
+    first_ctx = local_contexts[0]
+    first_goal = goals[0]
+    state = f"{first_ctx}\n⊢ {first_goal}\n\n"
+    
+    for ctx, g in zip(local_contexts[1:], goals[1:]):
+        state += f"...\n⊢ {g}\n\n"
+        
+    return state.strip()
 
 
 def get_optimizers(
