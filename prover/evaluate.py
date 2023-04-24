@@ -32,7 +32,12 @@ def get_theorems(args) -> Tuple[List[Theorem], List[Pos]]:
         repo = LeanGitRepo(t["url"], t["commit"])
         theorems.append(Theorem(repo, t["file_path"], t["full_name"]))
         positions.append(Pos(*t["start"]))
-    random.shuffle(theorems)
+    theorems = sorted(
+        theorems,
+        key=lambda t: hashlib.md5(
+            (str(t.file_path) + ":" + t.full_name).encode()
+        ).hexdigest(),
+    )
     logger.info(f"{len(theorems)} theorems loaded from {data_path}")
     return theorems, positions
 
