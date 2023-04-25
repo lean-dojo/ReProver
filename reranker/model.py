@@ -26,7 +26,7 @@ from common import (
 torch.set_float32_matmul_precision("medium")
 
 
-class PremiseRetriever(pl.LightningModule):
+class PremiseReranker(pl.LightningModule):
     def __init__(
         self,
         model_name: str,
@@ -53,7 +53,6 @@ class PremiseRetriever(pl.LightningModule):
             self.embeddings_staled = True
 
         self.validation_step_outputs = []
-        self.predict_step_outputs = []
 
     @classmethod
     def load(
@@ -162,8 +161,7 @@ class PremiseRetriever(pl.LightningModule):
             logger.info(f"Logging to {self.trainer.log_dir}")
 
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        if self.embeddings_staled:
-            self.reindex_corpus()
+        assert not self.embeddings_staled
         checkpoint["corpus"] = self.corpus
 
     def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
@@ -186,26 +184,21 @@ class PremiseRetriever(pl.LightningModule):
 
     def on_validation_start(self) -> None:
         if self.embeddings_staled:
-            self.reindex_corpus()
+            self.reindex_corpus(8 * self.trainer.datamodule.batch_size)
 
-    def _unpack_outputs(self, step_outputs) -> None:
+    def on_validation_end(self) -> None:
         outputs = []
 
-        for _ in step_outputs:
-            for context, all_pos_premises, retrieved_premises, scores in zip_strict(*_):
+        for _ in self.validation_step_outputs:
+            for context, pos_premise, retrieved_premises, scores in zip_strict(*_):
                 outputs.append(
                     {
                         "context": context,
-                        "all_pos_premises": all_pos_premises,
+                        "all_pos_premises": pos_premise,
                         "retrieved_premises": retrieved_premises,
                         "scores": scores,
                     }
                 )
-
-        return outputs
-
-    def on_validation_end(self) -> None:
-        outputs = self._unpack_outputs(self.validation_step_outputs)
 
         if self.trainer.log_dir is not None:
             path = (
@@ -216,13 +209,13 @@ class PremiseRetriever(pl.LightningModule):
                 pickle.dump(outputs, oup)
             logger.info(f"Validation outputs saved to {path}")
 
+        pdb.set_trace()
         self.validation_step_outputs.clear()
 
     @torch.no_grad()
-    def reindex_corpus(self) -> None:
+    def reindex_corpus(self, batch_size: int) -> None:
         """Re-index the retrieval corpus using the up-to-date encoder."""
         logger.info("Re-indexing the retrieval corpus")
-        batch_size = self.trainer.datamodule.eval_batch_size
 
         for i in tqdm(range(0, len(self.corpus), batch_size)):
             batch_premises = self.corpus.all_premises[i : i + batch_size]
@@ -258,13 +251,15 @@ class PremiseRetriever(pl.LightningModule):
         ):
             # Only log the first example in the batch.
             if i == 0:
-                msg_gt = "\n\n".join([p.serialize() for p in all_pos_premises])
+                msg_gt = "\n\n".join(
+                    [p.serialize() for p in enumerate(all_pos_premises)]
+                )
                 msg_retrieved = "\n\n".join(
                     [f"{j}. {p.serialize()}" for j, p in enumerate(premises)]
                 )
                 TP = len(set(premises).intersection(all_pos_premises))
-                r = float(TP) / len(all_pos_premises)
-                msg = f"Recall@{self.num_retrieved}: {r}\n\nGround truth:\n\n`{msg_gt}`\n\n Retrieved:\n\n```\n{msg_retrieved}\n```"
+                recall = float(TP) / len(all_pos_premises)
+                msg = f"Recall@{self.num_retrieved}: {recall}\n\nGround truth:\n\n`{msg_gt}`\n\n Retrieved:\n\n```\n{msg_retrieved}\n```"
                 tb.add_text(f"premises_val", msg, self.global_step)
 
             all_pos_premises = set(all_pos_premises)
@@ -274,16 +269,14 @@ class PremiseRetriever(pl.LightningModule):
                 TP = len(all_pos_premises.intersection(premises[: (j + 1)]))
                 recall[j].append(float(TP) / len(all_pos_premises))
                 if premises[j] in all_pos_premises and not first_match_found:
-                    MRR.append(1.0 / (j + 1))
+                    MRR.append(1.0 / j)
                     first_match_found = True
-            if not first_match_found:
-                MRR.append(0.0)
 
         recall = [100 * np.mean(_) for _ in recall]
 
         for j in range(self.num_retrieved):
             self.log(
-                f"Recall@{j+1}_val",
+                f"Recall@{j+1}_val (%)",
                 recall[j],
                 on_epoch=True,
                 sync_dist=True,
@@ -297,35 +290,6 @@ class PremiseRetriever(pl.LightningModule):
         self.validation_step_outputs.append(
             (batch["context"], batch["all_pos_premises"], retrieved_premises, scores)
         )
-
-    def on_predict_start(self) -> None:
-        if self.embeddings_staled:
-            self.reindex_corpus()
-
-    def predict_step(self, batch: Dict[str, Any], batch_idx: int):
-        context_emb = self._encode(batch["context_ids"], batch["context_mask"])
-        assert not self.embeddings_staled
-        retrieved_premises, scores = self.corpus.get_nearest_premises(
-            self.corpus_embeddings, batch["context"], context_emb, self.num_retrieved
-        )
-        pred = (batch["context"], batch["all_pos_premises"], retrieved_premises, scores)
-        self.predict_step_outputs.append(pred)
-        return pred
-
-    def on_predict_epoch_end(self) -> None:
-        outputs = self._unpack_outputs(self.predict_step_outputs)
-
-        if self.trainer.log_dir is not None:
-            path = Path(self.trainer.log_dir) / "predictions.pickle"
-            with path.open("wb") as oup:
-                pickle.dump(outputs, oup)
-            logger.info(f"Predictions saved to {path}")
-
-        self.predict_step_outputs.clear()
-
-    def on_fit_end(self) -> None:
-        logger.info("Using the trained model to make predictions.")
-        self.trainer.predict(self, self.trainer.datamodule.val_dataloader())
 
     def configure_optimizers(self) -> Dict[str, Any]:
         return get_optimizers(

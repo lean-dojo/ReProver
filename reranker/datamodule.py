@@ -3,7 +3,6 @@ import math
 import json
 import torch
 import random
-import itertools
 from tqdm import tqdm
 from pathlib import Path
 from loguru import logger
@@ -19,30 +18,25 @@ from common import (
     Context,
     Corpus,
     format_state,
+    format_tactic,
     Example,
     Batch,
+    MARK_START_SYMBOL,
+    find_marks,
 )
 
 
-class RetrievalDataset(Dataset):
+class RerankerDataset(Dataset):
     def __init__(
         self,
-        data_paths: List[Path],
-        corpus: Corpus,
-        num_negatives: int,
+        data_path: Path,
         max_seq_len: int,
-        tokenizer: ByT5Tokenizer,
-        is_train: bool,
+        tokenizer,
     ) -> None:
         super().__init__()
-        self.corpus = corpus
-        self.num_negatives = num_negatives
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
-        self.is_train = is_train
-        self.data = list(
-            itertools.chain.from_iterable(self._load_data(path) for path in data_paths)
-        )
+        self.data = self._load_data(data_path)
 
     def _load_data(self, data_path: Path) -> List[Example]:
         data = []
@@ -64,11 +58,8 @@ class RetrievalDataset(Dataset):
                     p = self.corpus.locate_premise(def_path, Pos(*prov["def_pos"]))
                     if p is None:  # Cannot find the premise.
                         num_discarded += 1
-                    else:
-                        all_pos_premises.add(p)
-
-                if len(all_pos_premises) == 0:
-                    continue
+                        continue
+                    all_pos_premises.add(p)
 
                 all_pos_premises = list(all_pos_premises)
                 state = format_state(tac["state_before"])
@@ -203,7 +194,7 @@ class RetrievalDataset(Dataset):
         return batch
 
 
-class RetrievalDataModule(pl.LightningDataModule):
+class RerankerDataModule(pl.LightningDataModule):
     def __init__(
         self,
         data_path: Union[str, Path],
@@ -232,7 +223,7 @@ class RetrievalDataModule(pl.LightningDataModule):
     def setup(self, stage: Optional[str] = None) -> None:
         if stage in (None, "fit"):
             self.ds_train = RetrievalDataset(
-                [self.data_path / "train.json"],
+                self.data_path / "train.json",
                 self.corpus,
                 self.num_negatives,
                 self.max_seq_len,
@@ -242,20 +233,7 @@ class RetrievalDataModule(pl.LightningDataModule):
 
         if stage in (None, "fit", "validate"):
             self.ds_val = RetrievalDataset(
-                [self.data_path / "val.json"],
-                self.corpus,
-                self.num_negatives,
-                self.max_seq_len,
-                self.tokenizer,
-                is_train=False,
-            )
-
-        if stage in (None, "fit", "predict"):
-            self.ds_pred = RetrievalDataset(
-                [
-                    self.data_path / f"{split}.json"
-                    for split in ("train", "val", "test")
-                ],
+                self.data_path / "val.json",
                 self.corpus,
                 self.num_negatives,
                 self.max_seq_len,
@@ -266,7 +244,7 @@ class RetrievalDataModule(pl.LightningDataModule):
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
             self.ds_train,
-            batch_size=self.batch_size,
+            self.batch_size,
             num_workers=self.num_workers,
             collate_fn=self.ds_train.collate,
             shuffle=True,
@@ -277,7 +255,7 @@ class RetrievalDataModule(pl.LightningDataModule):
     def val_dataloader(self) -> DataLoader:
         return DataLoader(
             self.ds_val,
-            batch_size=self.eval_batch_size,
+            self.eval_batch_size,
             num_workers=self.num_workers,
             collate_fn=self.ds_val.collate,
             shuffle=False,
@@ -285,20 +263,9 @@ class RetrievalDataModule(pl.LightningDataModule):
             drop_last=False,
         )
 
-    def predict_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.ds_pred,
-            batch_size=self.eval_batch_size,
-            num_workers=self.num_workers,
-            collate_fn=self.ds_pred.collate,
-            shuffle=False,
-            pin_memory=True,
-            drop_last=False,
-        )
-
 
 if __name__ == "__main__":
-    dm = RetrievalDataModule(
+    dm = RerankerDataModule(
         data_path="data/lean_bench/random/",
         corpus_path="data/lean_bench/corpus.jsonl",
         num_negatives=3,

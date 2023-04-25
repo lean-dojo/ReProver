@@ -42,7 +42,7 @@ data:
   corpus_path: data/lean_bench/corpus.jsonl
   num_negatives: 3
   batch_size: 8
-  eval_batch_size: 128
-  max_seq_len: 1024  # Can be larger.
+  eval_batch_size: 64
+  max_seq_len: 1024
   num_workers: 8
 
