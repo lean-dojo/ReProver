@@ -67,7 +67,7 @@ class RetrievalDataset(Dataset):
                     else:
                         all_pos_premises.add(p)
 
-                if len(all_pos_premises) == 0:
+                if self.is_train and len(all_pos_premises) == 0:
                     continue
 
                 all_pos_premises = list(all_pos_premises)

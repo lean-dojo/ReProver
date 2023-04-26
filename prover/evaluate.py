@@ -1,33 +1,53 @@
 import pdb
 import os
 import json
-import random
 import pickle
 import hashlib
 import argparse
 from pathlib import Path
 from loguru import logger
 from lean_dojo import Theorem
-from typing import List, Tuple
-from lean_dojo import LeanGitRepo, Theorem, Pos
+from typing import List, Tuple, Optional
+from lean_dojo import LeanGitRepo, Theorem, Pos, trace
 from prover.proof_search import Status, DistributedProver
 
 from common import set_logger
 
+# https://github.com/facebookresearch/miniF2F, 5271ddec788677c815cf818a06f368ef6498a106
+
 
 def get_theorems(args) -> Tuple[List[Theorem], List[Pos]]:
-    data_path = Path(args.data_path)
-    data = json.load((data_path / f"{args.split}.json").open())
+    if args.url is not None and args.commit is not None:
+        return get_theorems_from_repo(args.url, args.commit)
+    else:
+        assert args.data_path is not None
+        return get_theorems_from_files(
+            Path(args.data_path),
+            args.split,
+            args.file_path,
+            args.full_name,
+            args.name_filter,
+        )
+
+
+def get_theorems_from_files(
+    data_path: Path,
+    split: str,
+    file_path: Optional[str],
+    full_name: Optional[str],
+    name_filter: Optional[str],
+) -> Tuple[List[Theorem], List[Pos]]:
+    data = json.load((data_path / f"{split}.json").open())
     theorems = []
     positions = []
     for t in data:
-        if args.file_path is not None and t["file_path"] != args.file_path:
+        if file_path is not None and t["file_path"] != file_path:
             continue
-        if args.full_name is not None and t["full_name"] != args.full_name:
+        if full_name is not None and t["full_name"] != full_name:
             continue
-        if args.name_filter is not None and not hashlib.md5(
+        if name_filter is not None and not hashlib.md5(
             t["full_name"].encode()
-        ).hexdigest().startswith(args.name_filter):
+        ).hexdigest().startswith(name_filter):
             continue
         repo = LeanGitRepo(t["url"], t["commit"])
         theorems.append(Theorem(repo, t["file_path"], t["full_name"]))
@@ -39,6 +59,20 @@ def get_theorems(args) -> Tuple[List[Theorem], List[Pos]]:
         ).hexdigest(),
     )
     logger.info(f"{len(theorems)} theorems loaded from {data_path}")
+    return theorems, positions
+
+
+def get_theorems_from_repo(url: str, commit: str) -> Tuple[List[Theorem], List[Pos]]:
+    repo = LeanGitRepo(url, commit)
+    traced_repo = trace(repo)
+    theorems = []
+    positions = []
+    for t in traced_repo.get_traced_theorems():
+        if t.repo != repo:
+            continue
+        theorems.append(t.theorem)
+        positions.append(Pos(*t.start))
+    logger.info(f"{len(theorems)} theorems loaded from {repo}")
     return theorems, positions
 
 
@@ -58,6 +92,8 @@ def main() -> None:
         type=str,
         default="data/lean_bench/random",
     )
+    parser.add_argument("--url", type=str)
+    parser.add_argument("--commit", type=str)
     parser.add_argument("--file-path", type=str)
     parser.add_argument("--full-name", type=str)
     parser.add_argument("--name-filter", type=str)
@@ -93,11 +129,10 @@ def main() -> None:
         help="Number of tactics to sample at each node during proof search (Default: 5).",
     )
     # Follow the setup in PACT.
-    # TODO: Change to 600
     parser.add_argument(
         "--timeout",
         type=int,
-        default=1200,
+        default=600,
         help="Maximum number of seconds the proof search can take (Default: 1200).",
     )
     parser.add_argument(

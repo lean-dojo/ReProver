@@ -39,10 +39,9 @@ model:
 
 data:
   data_path: data/lean_bench/random/
-  corpus_path: data/lean_bench/corpus.jsonl
-  num_negatives: 3
+  preds_path: lightning_logs/version_15/predictions.pickle
   batch_size: 8
-  eval_batch_size: 64
+  eval_batch_size: 128
   max_seq_len: 1024
   num_workers: 8
 
