@@ -1,161 +1,159 @@
 import pdb
-import math
+import os
 import json
 import torch
-import random
 import pickle
+import random
+import itertools
 from tqdm import tqdm
-from pathlib import Path
-from loguru import logger
 from copy import deepcopy
-from lean_dojo import Pos
+from loguru import logger
 import pytorch_lightning as pl
-from typing import Union, Optional, List, Dict, Any
+from transformers import AutoTokenizer
+from typing import Optional, List, Dict, Any
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, ByT5Tokenizer
 
 
-from common import (
-    Context,
-    Corpus,
-    format_state,
-    format_tactic,
-    Example,
-    Batch,
-    MARK_START_SYMBOL,
-    find_marks,
-)
+from common import format_state, Example, Batch, MARK_START_SYMBOL
 
 
 class RerankerDataset(Dataset):
     def __init__(
         self,
-        data_path: Path,
+        data_paths: str,
         preds: List[Dict[str, Any]],
+        num_retrieved: int,
+        num_negatives: int,
         max_seq_len: int,
         tokenizer,
         is_train: bool,
     ) -> None:
         super().__init__()
+        self.data_paths = data_paths
         self.preds = preds
+        self.num_retrieved = num_retrieved
+        self.num_negatives = num_negatives
         self.max_seq_len = max_seq_len
         self.is_train = is_train
         self.tokenizer = tokenizer
-        self.data = self._load_data(data_path)
-        pdb.set_trace()
+        self.reload_data()        
 
-    def _load_data(self, data_path: Path) -> List[Example]:
+    def reload_data(self) -> None:
+        self.data = list(
+            itertools.chain.from_iterable(
+                self._load_data(path, self.is_train) for path in self.data_paths
+            )
+        )
+
+    def _load_data(self, data_path: str, is_train: bool) -> List[Example]:
         data = []
         logger.info(f"Loading data from {data_path}")
 
-        for thm in tqdm(json.load(data_path.open())):
+        for thm in tqdm(json.load(open(data_path))):
             repo_name = thm["url"].split("/")[-1]
-            file_path = Path(repo_name) / thm["file_path"]
+            file_path = os.path.join(repo_name, thm["file_path"])
 
             for tac in thm["traced_tactics"]:
-                state = tac["state_before"]
-                try:
-                    pred = self.preds[(file_path, thm["full_name"], state)]
-                except KeyError:
-                    logger.warning("skip")
-                for premise in pred["all_pos_premises"]:
-                    data.append({"state": state, "premise": premise, "label": True})
-                for premise in pred["retrieved_premises"]:
-                    if premise not in pred["all_pos_premises"]:
-                        data.append(
-                            {"state": state, "premise": premise, "label": False}
-                        )
+                state = format_state(tac["state_before"])
+                pred = self.preds[(file_path, thm["full_name"], state)]
+                retrieved_premises = pred["retrieved_premises"][: self.num_retrieved]
+                all_pos_premises = set(pred["all_pos_premises"])
 
-        logger.info(f"{len(data)} examples loaded.")
+                if is_train:
+                    for premise in all_pos_premises:
+                        data.append({"state": state, "premise": premise, "label": True})
+                    if len(all_pos_premises) == 0:
+                        continue
+                    if not all_pos_premises.issubset(retrieved_premises):
+                        neg_premises = [p for p in retrieved_premises if p not in all_pos_premises]
+                    else:
+                        last_idx = -1
+                        for i, p in enumerate(retrieved_premises):
+                            if p in all_pos_premises:
+                                last_idx = i
+                                break
+                        last_idx = max(last_idx, len(all_pos_premises) + self.num_negatives)
+                        neg_premises = [p for p in retrieved_premises[:last_idx] if p not in all_pos_premises] 
+                    for p in random.sample(neg_premises, self.num_negatives):
+                        data.append(
+                            {"state": state, "premise": p, "label": False}
+                        )
+                else:
+                    data.append(
+                        {
+                            "state": state,
+                            "all_pos_premises": all_pos_premises,
+                            "retrieved_premises": retrieved_premises,
+                        }
+                    )
+
+        if is_train:
+            num_examples = len(data)
+            num_positives = sum(ex["label"] for ex in data)
+            logger.info(
+                f"{num_examples} training examples loaded, including {num_positives} positive examples"
+            )
+
         return data
 
     def __len__(self) -> int:
         return len(self.data)
 
+    def _format_seq(self, state: str, premise: str) -> str:
+        return f"$PREMISE$ {premise.serialize()} $STATE$ {state}"
+
     def __getitem__(self, idx: int) -> Example:
-        if not self.is_train:
-            return self.data[idx]
-
-        pdb.set_trace()
-
+        ex = deepcopy(self.data[idx])
+        if self.is_train:
+            ex["seq"] = self._format_seq(ex["state"], ex["premise"])
+        else:
+            ex["seqs"] = [
+                self._format_seq(ex["state"], p) for p in ex["retrieved_premises"]
+            ]
         return ex
 
     def collate(self, examples: List[Example]) -> Batch:
         batch = {}
 
-        # Tokenize the context.
-        context = [ex["context"] for ex in examples]
-        tokenized_context = self.tokenizer(
-            [c.serialize() for c in context],
-            padding="longest",
-            max_length=self.max_seq_len,
-            truncation=True,
-            return_tensors="pt",
-        )
-        batch["context"] = context
-        batch["context_ids"] = tokenized_context.input_ids
-        batch["context_mask"] = tokenized_context.attention_mask
-
-        # Tokenize the label and premises.
         if self.is_train:
-            pos_premise = [ex["pos_premise"] for ex in examples]
-            tokenized_pos_premise = self.tokenizer(
-                [p.serialize() for p in pos_premise],
+            tokenized_seq = self.tokenizer(
+                [ex["seq"] for ex in examples],
                 padding="longest",
                 max_length=self.max_seq_len,
                 truncation=True,
                 return_tensors="pt",
             )
-            batch["pos_premise"] = pos_premise
-            batch["pos_premise_ids"] = tokenized_pos_premise.input_ids
-            batch["pos_premise_mask"] = tokenized_pos_premise.attention_mask
 
-            batch_size = len(examples)
-            label = torch.zeros(batch_size, batch_size * (1 + self.num_negatives))
-
-            # Check if one's negative is another's positive
-            for j in range(batch_size):
-                all_pos_premises = examples[j]["all_pos_premises"]
-                for k in range(batch_size * (1 + self.num_negatives)):
-                    if k < batch_size:
-                        pos_premise_k = examples[k]["pos_premise"]
-                    else:
-                        pos_premise_k = examples[k % batch_size]["neg_premises"][
-                            k // batch_size - 1
-                        ]
-                    label[j, k] = float(pos_premise_k in all_pos_premises)
-
-            batch["label"] = label
-            batch["neg_premises"] = []
-            batch["neg_premises_ids"] = []
-            batch["neg_premises_mask"] = []
-
-            for i in range(self.num_negatives):
-                neg_premise = [ex["neg_premises"][i] for ex in examples]
-                tokenized_neg_premise = self.tokenizer(
-                    [p.serialize() for p in neg_premise],
+            batch["seq_ids"] = tokenized_seq.input_ids
+            batch["seq_mask"] = tokenized_seq.attention_mask
+            batch["label"] = torch.tensor([ex["label"] for ex in examples], dtype=torch.float32)
+        else:
+            num_retrieved = len(examples[0]["seqs"])
+            for i in range(num_retrieved):
+                tokenized_seq = self.tokenizer(
+                    [ex["seqs"][i] for ex in examples],
                     padding="longest",
                     max_length=self.max_seq_len,
                     truncation=True,
                     return_tensors="pt",
                 )
-                batch["neg_premises"].append(neg_premise)
-                batch["neg_premises_ids"].append(tokenized_neg_premise.input_ids)
-                batch["neg_premises_mask"].append(tokenized_neg_premise.attention_mask)
+                batch[f"seq_{i}_ids"] = tokenized_seq.input_ids
+                batch[f"seq_{i}_mask"] = tokenized_seq.attention_mask
 
-        # Copy the rest of the fields.
         for k in examples[0].keys():
             if k not in batch:
                 batch[k] = [ex[k] for ex in examples]
-
+        
         return batch
 
 
 class RerankerDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        data_path: Union[str, Path],
-        preds_path: Union[str, Path],
+        data_path: str,
+        preds_path: str,
+        num_retrieved: int,
+        num_negatives: int,
         model_name: str,
         batch_size: int,
         eval_batch_size: int,
@@ -163,7 +161,9 @@ class RerankerDataModule(pl.LightningDataModule):
         num_workers: int,
     ) -> None:
         super().__init__()
-        self.data_path = Path(data_path)
+        self.data_path = data_path
+        self.num_retrieved = num_retrieved
+        self.num_negatives = num_negatives
         self.batch_size = batch_size
         self.eval_batch_size = eval_batch_size
         self.max_seq_len = max_seq_len
@@ -172,7 +172,7 @@ class RerankerDataModule(pl.LightningDataModule):
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
         self.preds = {}
-        for pred in pickle.load(Path(preds_path).open("rb")):
+        for pred in pickle.load(open(preds_path, "rb")):
             ctx = pred["context"]
             self.preds[ctx.path, ctx.theorem_full_name, ctx.state] = pred
 
@@ -182,8 +182,10 @@ class RerankerDataModule(pl.LightningDataModule):
     def setup(self, stage: Optional[str] = None) -> None:
         if stage in (None, "fit"):
             self.ds_train = RerankerDataset(
-                self.data_path / "train.json",
+                [os.path.join(self.data_path, "train.json")],
                 self.preds,
+                self.num_retrieved,
+                self.num_negatives,
                 self.max_seq_len,
                 self.tokenizer,
                 is_train=True,
@@ -191,8 +193,10 @@ class RerankerDataModule(pl.LightningDataModule):
 
         if stage in (None, "fit", "validate"):
             self.ds_val = RerankerDataset(
-                self.data_path / "val.json",
+                [os.path.join(self.data_path, "val.json")],
                 self.preds,
+                self.num_retrieved,
+                self.num_negatives,
                 self.max_seq_len,
                 self.tokenizer,
                 is_train=False,
@@ -200,8 +204,24 @@ class RerankerDataModule(pl.LightningDataModule):
 
         if stage in (None, "test"):
             self.ds_val = RerankerDataset(
-                self.data_path / "test.json",
+                [os.path.join(self.data_path, "test.json")],
                 self.preds,
+                self.num_retrieved,
+                self.num_negatives,
+                self.max_seq_len,
+                self.tokenizer,
+                is_train=False,
+            )
+
+        if stage in (None, "fit", "predict"):
+            self.ds_pred = RerankerDataset(
+                [
+                    os.path.join(self.data_path, f"{split}.json")
+                    for split in ("train", "val", "test")
+                ],
+                self.preds,
+                self.num_retrieved,
+                self.num_negatives,
                 self.max_seq_len,
                 self.tokenizer,
                 is_train=False,
@@ -229,15 +249,26 @@ class RerankerDataModule(pl.LightningDataModule):
             drop_last=False,
         )
 
+    def predict_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.ds_pred,
+            batch_size=self.eval_batch_size,
+            num_workers=self.num_workers,
+            collate_fn=self.ds_pred.collate,
+            shuffle=False,
+            pin_memory=True,
+            drop_last=False,
+        )
+
 
 if __name__ == "__main__":
     dm = RerankerDataModule(
         data_path="data/lean_bench/random/",
-        preds_path="lightning_logs/version_15/predictions.pickle",
+        preds_path="lightning_logs/version_28/predictions.pickle",
         model_name="google/byt5-small",
         batch_size=8,
         eval_batch_size=64,
-        max_seq_len=1024,
+        max_seq_len=2048,
         num_workers=0,
     )
     dm.prepare_data()
@@ -248,6 +279,7 @@ if __name__ == "__main__":
     ):
         if i == 0:
             print(data_batch)
+        print(data_batch["seq_ids"].shape)
 
     for i, data_batch in tqdm(enumerate(dm.val_dataloader())):
         if i == 0:

@@ -4,7 +4,6 @@ import json
 import pickle
 import hashlib
 import argparse
-from pathlib import Path
 from loguru import logger
 from lean_dojo import Theorem
 from typing import List, Tuple, Optional
@@ -22,7 +21,7 @@ def get_theorems(args) -> Tuple[List[Theorem], List[Pos]]:
     else:
         assert args.data_path is not None
         return get_theorems_from_files(
-            Path(args.data_path),
+            args.data_path,
             args.split,
             args.file_path,
             args.full_name,
@@ -31,13 +30,13 @@ def get_theorems(args) -> Tuple[List[Theorem], List[Pos]]:
 
 
 def get_theorems_from_files(
-    data_path: Path,
+    data_path: str,
     split: str,
     file_path: Optional[str],
     full_name: Optional[str],
     name_filter: Optional[str],
 ) -> Tuple[List[Theorem], List[Pos]]:
-    data = json.load((data_path / f"{split}.json").open())
+    data = json.load(open(os.path.join(data_path, f"{split}.json")))
     theorems = []
     positions = []
     for t in data:

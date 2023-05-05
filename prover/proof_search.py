@@ -1,3 +1,4 @@
+import os
 import sys
 import pdb
 import ray
@@ -5,26 +6,24 @@ import time
 import heapq
 import torch
 import itertools
-from pathlib import Path
 from lean_dojo import (
     Pos,
     Dojo,
     Theorem,
     TacticState,
     TacticError,
+    TimeoutError,
     IncompleteSolve1,
     ProofFinished,
     ProofGivenUp,
     DojoInitError,
     DojoCrashError,
 )
-from pathlib import Path
 from loguru import logger
 from dataclasses import dataclass
 from ray.util.actor_pool import ActorPool
 from ray.util.queue import Queue, Empty
-from typing import List, Optional, Tuple, Union
-from lean_dojo import ProofFinished, TacticState, TacticError
+from typing import List, Optional, Tuple
 
 
 from common import zip_strict
@@ -83,7 +82,7 @@ class TacticGeneratorConfig:
 @dataclass(eq=False)
 class InferenceRequest:
     state: List[str]
-    file_path: List[Path]
+    file_path: List[str]
     theorem_full_name: List[str]
     theorem_pos: List[Pos]
     num_samples: int
@@ -253,7 +252,7 @@ class BestFirstSearchProver:
 
         # Query the model for tactics
         if isinstance(search_node.state, TacticState):
-            ts = search_node.state.value
+            ts = search_node.state.pp
         else:
             ts = search_node.state.unsolved_tactic_state
         suggestions = self._generate_tactics(ts, use_external)
@@ -282,7 +281,7 @@ class BestFirstSearchProver:
     def _external_batch_generate(
         self,
         state: List[str],
-        file_path: List[Path],
+        file_path: List[str],
         theorem_full_name: List[str],
         theorem_pos: List[Pos],
         num_samples: int,
@@ -308,7 +307,9 @@ class BestFirstSearchProver:
             if use_external:
                 suggestions = self._external_batch_generate(
                     state=[ts],
-                    file_path=[Path(self.theorem.repo.name) / self.theorem.file_path],
+                    file_path=[
+                        os.path.join(self.theorem.repo.name, self.theorem.file_path)
+                    ],
                     theorem_full_name=[self.theorem.full_name],
                     theorem_pos=[self.posision],
                     num_samples=self.num_sampled_tactics,
@@ -316,14 +317,16 @@ class BestFirstSearchProver:
             else:
                 suggestions = self.tac_gen.generate(
                     state=ts,
-                    file_path=Path(self.theorem.repo.name) / self.theorem.file_path,
+                    file_path=os.path.join(
+                        self.theorem.repo.name, self.theorem.file_path
+                    ),
                     theorem_full_name=self.theorem.full_name,
                     theorem_pos=self.posision,
                     num_samples=self.num_sampled_tactics,
                 )
         else:
             first_goal = ts.split("\n\n")[0]
-            path = Path(self.theorem.repo.name) / self.theorem.file_path
+            path = os.path.join(self.theorem.repo.name, self.theorem.file_path)
             if use_external:
                 all_suggestions = self._external_batch_generate(
                     state=[ts, first_goal],
@@ -377,7 +380,12 @@ class BestFirstSearchProver:
             # Build a new node
             if isinstance(response, ProofFinished):
                 result_node = ProofFinishedNode(response)
-            elif type(response) in (TacticError, IncompleteSolve1, ProofGivenUp):
+            elif type(response) in (
+                TacticError,
+                TimeoutError,
+                IncompleteSolve1,
+                ProofGivenUp,
+            ):
                 result_node = ErrorNode(response)
             else:
                 assert isinstance(response, TacticState)
@@ -428,7 +436,12 @@ class BestFirstSearchProver:
                 assert isinstance(node, ProofFinishedNode)
                 assert node not in self.priority_queue
                 assert self.root.status == Status.PROVED
-            elif type(response) in (TacticError, IncompleteSolve1, ProofGivenUp):
+            elif type(response) in (
+                TacticError,
+                TimeoutError,
+                IncompleteSolve1,
+                ProofGivenUp,
+            ):
                 assert isinstance(node, ErrorNode)
                 assert node not in self.priority_queue
             else:
@@ -444,8 +457,8 @@ class BestFirstSearchProver:
 
 def create_tactic_generator(
     model: str,
-    gen_ckpt_path: Path,
-    ret_ckpt_path: Path,
+    gen_ckpt_path: str,
+    ret_ckpt_path: str,
     device,
     length_penalty: Optional[float] = None,
     temperature: Optional[float] = None,
@@ -472,8 +485,8 @@ class CpuProver(BestFirstSearchProver):
     def __init__(
         self,
         model: str,
-        gen_ckpt_path: Path,
-        ret_ckpt_path: Path,
+        gen_ckpt_path: str,
+        ret_ckpt_path: str,
         length_penalty: float,
         temperature: float,
         retrieval_weight: float,
@@ -510,8 +523,8 @@ class GpuProver(BestFirstSearchProver):
     def __init__(
         self,
         model: str,
-        gen_ckpt_path: Path,
-        ret_ckpt_path: Path,
+        gen_ckpt_path: str,
+        ret_ckpt_path: str,
         length_penalty: float,
         temperature: float,
         retrieval_weight: float,
@@ -548,8 +561,8 @@ class GpuTacticGenerator:
     def __init__(
         self,
         model: str,
-        gen_ckpt_path: Path,
-        ret_ckpt_path: Path,
+        gen_ckpt_path: str,
+        ret_ckpt_path: str,
         requests_queue: Queue,
         batch_size: int,
     ) -> None:
@@ -637,8 +650,8 @@ class DistributedProver:
     def __init__(
         self,
         model: str,
-        gen_ckpt_path: Union[str, Path],
-        ret_ckpt_path: Union[str, Path],
+        gen_ckpt_path: str,
+        ret_ckpt_path: str,
         length_penalty: float,
         temperature: float,
         retrieval_weight: float,
@@ -649,9 +662,6 @@ class DistributedProver:
         num_sampled_tactics: int,
         debug: Optional[bool] = False,
     ) -> None:
-        gen_ckpt_path = Path(gen_ckpt_path)
-        ret_ckpt_path = Path(ret_ckpt_path)
-
         self.distributed = num_cpus > 1
         if not self.distributed:
             tac_gen = create_tactic_generator(

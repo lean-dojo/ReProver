@@ -10,7 +10,7 @@ trainer:
       offload_optimizer: false
       cpu_checkpointing: false
   gradient_clip_val: 1.0
-  max_steps: 400000
+  max_steps: 500000
   accumulate_grad_batches: 1
   callbacks:
     - class_path: pytorch_lightning.callbacks.LearningRateMonitor
@@ -27,13 +27,13 @@ trainer:
     - class_path: pytorch_lightning.callbacks.EarlyStopping
       init_args:
         monitor: Recall@10_val
-        patience: 4
+        patience: 3
         mode: max
         verbose: true
 
 model:
   model_name: google/byt5-small  # Can be larger
-  lr: 2e-4
+  lr: 1e-4
   warmup_steps: 2000
   num_retrieved: 100
 
@@ -41,6 +41,8 @@ data:
   data_path: data/lean_bench/random/
   corpus_path: data/lean_bench/corpus.jsonl
   num_negatives: 3
+  num_in_file_negatives: 1
+  accessible_premises_only: true
   batch_size: 8
   eval_batch_size: 128
   max_seq_len: 1024  # Can be larger.

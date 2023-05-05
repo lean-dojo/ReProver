@@ -1,13 +1,14 @@
+import os
 import pdb
+import math
 import torch
 import pickle
 import numpy as np
 from tqdm import tqdm
-from pathlib import Path
 from loguru import logger
 import pytorch_lightning as pl
 import torch.nn.functional as F
-from typing import List, Dict, Any, Union, Tuple
+from typing import List, Dict, Any, Union, Tuple, Optional
 from transformers import T5EncoderModel, AutoTokenizer
 from pytorch_lightning.strategies.deepspeed import DeepSpeedStrategy
 
@@ -20,6 +21,7 @@ from common import (
     load_checkpoint,
     zip_strict,
     MARK_START_SYMBOL,
+    cpu_checkpointing_enabled,
 )
 
 
@@ -34,7 +36,8 @@ class PremiseRetriever(pl.LightningModule):
         warmup_steps: int,
         num_retrieved: int,
         max_seq_len: int,
-        corpus_path: Union[str, Path, None] = None,
+        accessible_premises_only: bool,
+        corpus_path: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -42,6 +45,7 @@ class PremiseRetriever(pl.LightningModule):
         self.warmup_steps = warmup_steps
         self.num_retrieved = num_retrieved
         self.max_seq_len = max_seq_len
+        self.accessible_premises_only = accessible_premises_only
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.encoder = T5EncoderModel.from_pretrained(model_name)
 
@@ -52,31 +56,17 @@ class PremiseRetriever(pl.LightningModule):
             self.corpus = None
             self.embeddings_staled = True
 
+        self.training_step_outputs = []
         self.validation_step_outputs = []
         self.predict_step_outputs = []
 
     @classmethod
-    def load(
-        cls, ckpt_path: Union[str, Path], device, freeze: bool
-    ) -> "PremiseRetriever":
-        return load_checkpoint(cls, Path(ckpt_path), device, freeze)
+    def load(cls, ckpt_path: str, device, freeze: bool) -> "PremiseRetriever":
+        return load_checkpoint(cls, ckpt_path, device, freeze)
 
     @property
     def embedding_size(self) -> int:
         return self.encoder.config.hidden_size
-
-    def _cpu_checkpointing_enabled(self) -> bool:
-        try:
-            trainer = self.trainer
-            return (
-                trainer.strategy is not None
-                and isinstance(trainer.strategy, DeepSpeedStrategy)
-                and trainer.strategy.config["activation_checkpointing"][
-                    "cpu_checkpointing"
-                ]
-            )
-        except RuntimeError:
-            return False
 
     def _encode(
         self, input_ids: torch.LongTensor, attention_mask: torch.LongTensor
@@ -84,7 +74,7 @@ class PremiseRetriever(pl.LightningModule):
         """Encode a tokenized sequence represented by ``input_ids`` and ``attention_mask``
         into a feature vector using ``encoder``.
         """
-        if self._cpu_checkpointing_enabled():
+        if cpu_checkpointing_enabled(self):
             hidden_states = torch.utils.checkpoint.checkpoint(
                 self.encoder, input_ids, attention_mask, use_reentrant=False
             )[0]
@@ -208,11 +198,11 @@ class PremiseRetriever(pl.LightningModule):
         outputs = self._unpack_outputs(self.validation_step_outputs)
 
         if self.trainer.log_dir is not None:
-            path = (
-                Path(self.trainer.log_dir)
-                / f"epoch{self.current_epoch}_validation_outputs.pickle"
+            path = os.path.join(
+                self.trainer.log_dir,
+                f"epoch{self.current_epoch}_validation_outputs.pickle",
             )
-            with path.open("wb") as oup:
+            with open(path, "wb") as oup:
                 pickle.dump(outputs, oup)
             logger.info(f"Validation outputs saved to {path}")
 
@@ -245,7 +235,7 @@ class PremiseRetriever(pl.LightningModule):
         context_emb = self._encode(batch["context_ids"], batch["context_mask"])
         assert not self.embeddings_staled
         retrieved_premises, scores = self.corpus.get_nearest_premises(
-            self.corpus_embeddings, batch["context"], context_emb, self.num_retrieved
+            self.corpus_embeddings, batch["context"], context_emb, self.num_retrieved, self.accessible_premises_only,
         )
 
         # Evaluation & logging.
@@ -254,7 +244,7 @@ class PremiseRetriever(pl.LightningModule):
         tb = self.logger.experiment
 
         for i, (all_pos_premises, premises) in enumerate(
-            zip(batch["all_pos_premises"], retrieved_premises)
+            zip_strict(batch["all_pos_premises"], retrieved_premises)
         ):
             # Only log the first example in the batch.
             if i == 0:
@@ -263,7 +253,10 @@ class PremiseRetriever(pl.LightningModule):
                     [f"{j}. {p.serialize()}" for j, p in enumerate(premises)]
                 )
                 TP = len(set(premises).intersection(all_pos_premises))
-                r = float(TP) / len(all_pos_premises)
+                if len(all_pos_premises) == 0:
+                    r = math.nan
+                else:
+                    r = float(TP) / len(all_pos_premises)
                 msg = f"Recall@{self.num_retrieved}: {r}\n\nGround truth:\n\n`{msg_gt}`\n\n Retrieved:\n\n```\n{msg_retrieved}\n```"
                 tb.add_text(f"premises_val", msg, self.global_step)
 
@@ -272,6 +265,8 @@ class PremiseRetriever(pl.LightningModule):
 
             for j in range(self.num_retrieved):
                 TP = len(all_pos_premises.intersection(premises[: (j + 1)]))
+                if len(all_pos_premises) == 0:
+                    continue
                 recall[j].append(float(TP) / len(all_pos_premises))
                 if premises[j] in all_pos_premises and not first_match_found:
                     MRR.append(1.0 / (j + 1))
@@ -306,7 +301,7 @@ class PremiseRetriever(pl.LightningModule):
         context_emb = self._encode(batch["context_ids"], batch["context_mask"])
         assert not self.embeddings_staled
         retrieved_premises, scores = self.corpus.get_nearest_premises(
-            self.corpus_embeddings, batch["context"], context_emb, self.num_retrieved
+            self.corpus_embeddings, batch["context"], context_emb, self.num_retrieved, self.accessible_premises_only,
         )
         pred = (batch["context"], batch["all_pos_premises"], retrieved_premises, scores)
         self.predict_step_outputs.append(pred)
@@ -316,8 +311,8 @@ class PremiseRetriever(pl.LightningModule):
         outputs = self._unpack_outputs(self.predict_step_outputs)
 
         if self.trainer.log_dir is not None:
-            path = Path(self.trainer.log_dir) / "predictions.pickle"
-            with path.open("wb") as oup:
+            path = os.path.join(self.trainer.log_dir, "predictions.pickle")
+            with open(path, "wb") as oup:
                 pickle.dump(outputs, oup)
             logger.info(f"Predictions saved to {path}")
 
@@ -325,7 +320,7 @@ class PremiseRetriever(pl.LightningModule):
 
     def on_fit_end(self) -> None:
         logger.info("Using the trained model to make predictions.")
-        self.trainer.predict(self, self.trainer.datamodule.val_dataloader())
+        self.trainer.predict(self, self.trainer.datamodule.predict_dataloader())
 
     def configure_optimizers(self) -> Dict[str, Any]:
         return get_optimizers(
@@ -357,6 +352,6 @@ class PremiseRetriever(pl.LightningModule):
         )
         assert not self.embeddings_staled
         retrieved_premises, scores = self.corpus.get_nearest_premises(
-            self.corpus_embeddings, [ctx], context_emb, k
+            self.corpus_embeddings, [ctx], context_emb, k, self.accessible_premises_only,
         )
         return retrieved_premises[0], scores[0]

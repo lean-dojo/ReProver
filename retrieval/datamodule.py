@@ -1,16 +1,14 @@
-import pdb
-import math
+import os
 import json
 import torch
 import random
 import itertools
 from tqdm import tqdm
-from pathlib import Path
 from loguru import logger
 from copy import deepcopy
 from lean_dojo import Pos
 import pytorch_lightning as pl
-from typing import Union, Optional, List
+from typing import Optional, List
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, ByT5Tokenizer
 
@@ -27,9 +25,11 @@ from common import (
 class RetrievalDataset(Dataset):
     def __init__(
         self,
-        data_paths: List[Path],
+        data_paths: List[str],
         corpus: Corpus,
         num_negatives: int,
+        num_in_file_negatives: int,
+        accessible_premises_only: bool,
         max_seq_len: int,
         tokenizer: ByT5Tokenizer,
         is_train: bool,
@@ -37,6 +37,8 @@ class RetrievalDataset(Dataset):
         super().__init__()
         self.corpus = corpus
         self.num_negatives = num_negatives
+        self.num_in_file_negatives = num_in_file_negatives
+        self.accessible_premises_only = accessible_premises_only
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
         self.is_train = is_train
@@ -44,14 +46,14 @@ class RetrievalDataset(Dataset):
             itertools.chain.from_iterable(self._load_data(path) for path in data_paths)
         )
 
-    def _load_data(self, data_path: Path) -> List[Example]:
+    def _load_data(self, data_path: str) -> List[Example]:
         data = []
         num_discarded = 0
         logger.info(f"Loading data from {data_path}")
 
-        for thm in tqdm(json.load(data_path.open())):
+        for thm in tqdm(json.load(open(data_path))):
             repo_name = thm["url"].split("/")[-1]
-            file_path = Path(repo_name) / thm["file_path"]
+            file_path = os.path.join(repo_name, thm["file_path"])
             deps = self.corpus.get_dependencies(file_path)
 
             for tac in thm["traced_tactics"]:
@@ -59,7 +61,7 @@ class RetrievalDataset(Dataset):
                 all_pos_premises = set()
 
                 for prov in provenances:
-                    def_path = Path(prov["def_path"])
+                    def_path = prov["def_path"]
                     assert def_path == file_path or def_path in deps
                     p = self.corpus.locate_premise(def_path, Pos(*prov["def_pos"]))
                     if p is None:  # Cannot find the premise.
@@ -105,31 +107,36 @@ class RetrievalDataset(Dataset):
 
         # Sample negative premises from all accessible premises.
         ex = deepcopy(self.data[idx])
-        premises_in_path = []
-        premises_not_in_path = []
+        premises_in_file = []
+        premises_outside_file = []
 
         for p in self.corpus.get_premises(ex["context"].path):
             if p == ex["pos_premise"]:
                 continue
             if p.end < ex["context"].theorem_pos:
                 if ex["pos_premise"].path == ex["context"].path:
-                    premises_in_path.append(p)
+                    premises_in_file.append(p)
                 else:
-                    premises_not_in_path.append(p)
+                    premises_outside_file.append(p)
 
         for p in self.corpus.transitive_dep_graph.successors(ex["context"].path):
             if p == ex["pos_premise"].path:
-                premises_in_path += [
+                premises_in_file += [
                     _p for _p in self.corpus.get_premises(p) if _p != ex["pos_premise"]
                 ]
             else:
-                premises_not_in_path += self.corpus.get_premises(p)
-        num_negatives_in_path = min(self.num_negatives // 2, len(premises_in_path))
-        num_negatives_out_path = self.num_negatives - num_negatives_in_path
-        ex["neg_premises"] = random.sample(
-            premises_in_path, num_negatives_in_path
-        ) + random.sample(premises_not_in_path, num_negatives_out_path)
+                premises_outside_file += self.corpus.get_premises(p)
 
+        if not self.accessible_premises_only:
+            premises_outside_file = self.corpus.all_premises
+
+        num_in_file_negatives = min(len(premises_in_file), self.num_in_file_negatives)
+
+        ex["neg_premises"] = random.sample(
+            premises_in_file, num_in_file_negatives
+        ) + random.sample(
+            premises_outside_file, self.num_negatives - num_in_file_negatives
+        )
         return ex
 
     def collate(self, examples: List[Example]) -> Batch:
@@ -206,9 +213,11 @@ class RetrievalDataset(Dataset):
 class RetrievalDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        data_path: Union[str, Path],
-        corpus_path: Union[str, Path],
+        data_path: str,
+        corpus_path: str,
         num_negatives: int,
+        num_in_file_negatives: int,
+        accessible_premises_only: bool,
         model_name: str,
         batch_size: int,
         eval_batch_size: int,
@@ -216,8 +225,11 @@ class RetrievalDataModule(pl.LightningDataModule):
         num_workers: int,
     ) -> None:
         super().__init__()
-        self.data_path = Path(data_path)
+        self.data_path = data_path
         self.num_negatives = num_negatives
+        assert 0 <= num_in_file_negatives <= num_negatives
+        self.num_in_file_negatives = num_in_file_negatives
+        self.accessible_premises_only = accessible_premises_only
         self.batch_size = batch_size
         self.eval_batch_size = eval_batch_size
         self.max_seq_len = max_seq_len
@@ -232,9 +244,11 @@ class RetrievalDataModule(pl.LightningDataModule):
     def setup(self, stage: Optional[str] = None) -> None:
         if stage in (None, "fit"):
             self.ds_train = RetrievalDataset(
-                [self.data_path / "train.json"],
+                [os.path.join(self.data_path, "train.json")],
                 self.corpus,
                 self.num_negatives,
+                self.num_in_file_negatives,
+                self.accessible_premises_only,
                 self.max_seq_len,
                 self.tokenizer,
                 is_train=True,
@@ -242,9 +256,11 @@ class RetrievalDataModule(pl.LightningDataModule):
 
         if stage in (None, "fit", "validate"):
             self.ds_val = RetrievalDataset(
-                [self.data_path / "val.json"],
+                [os.path.join(self.data_path, "val.json")],
                 self.corpus,
                 self.num_negatives,
+                self.num_in_file_negatives,
+                self.accessible_premises_only,
                 self.max_seq_len,
                 self.tokenizer,
                 is_train=False,
@@ -253,11 +269,13 @@ class RetrievalDataModule(pl.LightningDataModule):
         if stage in (None, "fit", "predict"):
             self.ds_pred = RetrievalDataset(
                 [
-                    self.data_path / f"{split}.json"
+                    os.path.join(self.data_path, f"{split}.json")
                     for split in ("train", "val", "test")
                 ],
                 self.corpus,
                 self.num_negatives,
+                self.num_in_file_negatives,
+                self.accessible_premises_only,
                 self.max_seq_len,
                 self.tokenizer,
                 is_train=False,

@@ -5,14 +5,12 @@ import torch
 import itertools
 from time import monotonic
 from copy import copy
-from pathlib import Path
 from lean_dojo import Pos
 from loguru import logger
 from transformers import T5ForConditionalGeneration, ByT5Tokenizer
 import pytorch_lightning as pl
 import torch.nn.functional as F
 from torchmetrics import Metric
-from collections import defaultdict
 from abc import ABC, abstractmethod
 from retrieval.model import PremiseRetriever
 from transformers.generation import BeamHypotheses
@@ -62,7 +60,7 @@ class TacticGenerator(ABC):
     def generate(
         self,
         state: str,
-        file_path: Path,
+        file_path: str,
         theorem_full_name: str,
         theorem_pos: Pos,
         num_samples: int,
@@ -73,7 +71,7 @@ class TacticGenerator(ABC):
     def batch_generate(
         self,
         state: List[str],
-        file_path: List[Path],
+        file_path: List[str],
         theorem_full_name: List[str],
         theorem_pos: List[Pos],
         num_samples: int,
@@ -106,15 +104,13 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
             self.add_module(f"val_top{k}_acc", acc)
 
     @classmethod
-    def load(
-        cls, ckpt_path: Union[str, Path], device, freeze: bool
-    ) -> "TransformerTacticGenerator":
-        return load_checkpoint(cls, Path(ckpt_path), device, freeze)
+    def load(cls, ckpt_path: str, device, freeze: bool) -> "TransformerTacticGenerator":
+        return load_checkpoint(cls, ckpt_path, device, freeze)
 
     def generate(
         self,
         state: str,
-        file_path: Path,
+        file_path: str,
         theorem_full_name: str,
         theorem_pos: Pos,
         num_samples: int,
@@ -126,7 +122,7 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
     def batch_generate(
         self,
         state: List[str],
-        file_path: List[Path],
+        file_path: List[str],
         theorem_full_name: List[str],
         theorem_pos: List[Pos],
         num_samples: int,
@@ -186,34 +182,18 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
 
     def forward(
         self,
-        state_ids: torch.Tensor,
-        state_mask: torch.Tensor,
+        state_and_premises_ids: torch.Tensor,
+        state_and_premises_mask: torch.Tensor,
         tactic_ids: torch.Tensor,
     ) -> torch.Tensor:
         return self.t5(
-            input_ids=state_ids,
-            attention_mask=state_mask,
+            input_ids=state_and_premises_ids,
+            attention_mask=state_and_premises_mask,
             labels=tactic_ids,
         ).loss
 
     def training_step(self, batch, batch_idx: int):
-        """
-        # Don't apply the loss on <a>...</a>
-        assert isinstance(self.tokenizer, ByT5Tokenizer)
-        masked_tactic_ids = tactic_ids.clone().detach()
-        tactic_utf8 = [t.encode("utf-8") for t in batch["tactic"]]
-        for i, t in enumerate(tactic_utf8):
-            assert len(t) >= self.max_seq_len or (
-                masked_tactic_ids[i, len(t)] == self.tokenizer.eos_token_id
-                and masked_tactic_ids[i, len(t) - 1] != self.tokenizer.eos_token_id
-            )
-            for m in re.finditer(b"(?<=<a>).+?</a>", t):
-                if m.start() < self.max_seq_len:
-                    end = min(m.end(), self.max_seq_len)
-                    masked_tactic_ids[i, m.start() : end] = -100
-        """
-
-        loss = self(batch["state_ids"], batch["state_mask"], batch["tactic_ids"])
+        loss = self(batch["state_and_premises_ids"], batch["state_and_premises_mask"], batch["tactic_ids"])
         self.log(
             "loss_train",
             loss,
@@ -222,19 +202,19 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
             sync_dist=True,
             batch_size=len(batch),
         )
-        self._log_io_texts("train", batch["state_ids"], batch["tactic_ids"])
+        self._log_io_texts("train", batch["state_and_premises_ids"], batch["tactic_ids"])
         return loss
 
     def _log_io_texts(
-        self, split: str, state_ids: torch.LongTensor, tactic_ids: torch.LongTensor
+        self, split: str, state_and_premises_ids: torch.LongTensor, tactic_ids: torch.LongTensor
     ) -> None:
         tb = self.logger.experiment
-        inp = self.tokenizer.decode(state_ids[0], skip_special_tokens=True)
+        inp = self.tokenizer.decode(state_and_premises_ids[0], skip_special_tokens=True)
         oup_ids = torch.where(
             tactic_ids[0] == -100, self.tokenizer.pad_token_id, tactic_ids[0]
         )
         oup = self.tokenizer.decode(oup_ids, skip_special_tokens=True)
-        tb.add_text(f"{split}_state", f"```\n{inp}\n```", self.global_step)
+        tb.add_text(f"{split}_state_and_premises", f"```\n{inp}\n```", self.global_step)
         tb.add_text(f"{split}_tactic", f"`{oup}`", self.global_step)
 
     def on_fit_start(self) -> None:
@@ -244,19 +224,19 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
             logger.info(f"Logging to {self.trainer.log_dir}")
 
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> None:
-        state_ids = batch["state_ids"]
-        state_mask = batch["state_mask"]
+        state_and_premises_ids = batch["state_and_premises_ids"]
+        state_and_premises_mask = batch["state_and_premises_mask"]
         tactic_ids = batch["tactic_ids"]
 
-        loss = self(state_ids, state_mask, tactic_ids)
+        loss = self(state_and_premises_ids, state_and_premises_mask, tactic_ids)
 
         self.log(f"loss_val", loss, on_step=False, on_epoch=True, sync_dist=True)
-        self._log_io_texts("val", state_ids, tactic_ids)
+        self._log_io_texts("val", state_and_premises_ids, tactic_ids)
 
         # Generate topk tactic candidates via Beam Search.
         output = self.t5.generate(
-            input_ids=state_ids,
-            attention_mask=state_mask,
+            input_ids=state_and_premises_ids,
+            attention_mask=state_and_premises_mask,
             max_length=self.max_seq_len,
             num_beams=self.num_beams,
             do_sample=False,
@@ -264,7 +244,7 @@ class TransformerTacticGenerator(TacticGenerator, pl.LightningModule):
             early_stopping=False,
         )
         output_text = self.tokenizer.batch_decode(output, skip_special_tokens=True)
-        batch_size = state_ids.size(0)
+        batch_size = state_and_premises_ids.size(0)
         assert len(output_text) == batch_size * self.num_beams
         tactics_pred = [
             output_text[i * self.num_beams : (i + 1) * self.num_beams]
@@ -308,8 +288,8 @@ class LengthDiscountedBeamHypotheses(BeamHypotheses):
 class RetrivalAugmentedTacticGenerator(TacticGenerator):
     def __init__(
         self,
-        gen_ckpt: Union[str, Path],
-        ret_ckpt: Union[str, Path],
+        gen_ckpt: str,
+        ret_ckpt: str,
         device,
         length_penalty: float,
         temperature: float,
@@ -352,7 +332,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
     def generate(
         self,
         state: str,
-        file_path: Path,
+        file_path: List[str],
         theorem_full_name: str,
         theorem_pos: Pos,
         num_samples: int,
@@ -364,7 +344,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
     def batch_generate(
         self,
         state: List[str],
-        file_path: List[Path],
+        file_path: List[str],
         theorem_full_name: List[str],
         theorem_pos: List[Pos],
         num_samples: int,
@@ -431,7 +411,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
     def beam_search(
         self,
         state: List[str],
-        file_path: List[Path],
+        file_path: List[str],
         theorem_full_name: List[str],
         theorem_pos: List[Pos],
         encoder_outputs,
@@ -531,7 +511,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
 
                 beam_idx = 0
                 for beam_token_rank, (next_token, next_score, next_index) in enumerate(
-                    zip(
+                    zip_strict(
                         next_tokens[batch_idx],
                         next_scores[batch_idx],
                         next_indices[batch_idx],
@@ -668,7 +648,7 @@ class RetrivalAugmentedTacticGenerator(TacticGenerator):
     def _process_logits(
         self,
         state: List[str],
-        file_path: List[Path],
+        file_path: List[str],
         theorem_full_name: List[str],
         theorem_pos: List[Pos],
         batch_size: int,
@@ -833,7 +813,7 @@ class GPT4TacticGenerator(TacticGenerator):
     def generate(
         self,
         state: str,
-        file_path: Path,
+        file_path: str,
         theorem_full_name: str,
         theorem_pos: Pos,
         num_samples: int,
@@ -910,7 +890,7 @@ class GPT4TacticGenerator(TacticGenerator):
     def batch_generate(
         self,
         state: List[str],
-        file_path: Path,
+        file_path: str,
         theorem_full_name: str,
         theorem_pos: Pos,
         num_samples: int,

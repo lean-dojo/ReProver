@@ -1,10 +1,17 @@
 import math
 from enum import Enum
+from lean_dojo import (
+    TacticState,
+    TacticError,
+    TimeoutError,
+    IncompleteSolve1,
+    ProofGivenUp,
+    ProofFinished,
+)
 from abc import ABC, abstractmethod
 from functools import total_ordering
 from dataclasses import dataclass, field
-from lean_dojo import TacticState, TacticError, ProofFinished
-from typing import Optional, List, Tuple, Iterable
+from typing import Optional, List, Tuple, Iterable, Union
 
 
 class Status(Enum):
@@ -43,7 +50,7 @@ class ProofFinishedNode(Node):
 
 @dataclass
 class ErrorNode(Node):
-    inner: TacticError
+    inner: Union[TacticError, TimeoutError, IncompleteSolve1, ProofGivenUp]
     status = Status.FAILED
     distance_to_proof = math.inf
     is_terminal = True
