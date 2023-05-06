@@ -9,6 +9,7 @@ from lean_dojo import Theorem
 from typing import List, Tuple, Optional
 from lean_dojo import LeanGitRepo, Theorem, Pos, trace
 from prover.proof_search import Status, DistributedProver
+from generator.model import RetrivalAugmentedGenerator
 
 from common import set_logger
 
@@ -100,23 +101,22 @@ def main() -> None:
         "--model",
         type=str,
         choices=[
-            "TransformerTacticGenerator",
-            "RetrivalAugmentedTacticGenerator",
+            "RetrivalAugmentedGenerator",
             "GPT4TacticGenerator",
         ],
-        default="RetrivalAugmentedTacticGenerator",
+        default="RetrivalAugmentedGenerator",
     )
     parser.add_argument(
         "--gen-ckpt-path",
         type=str,
         help="Checkpoint of the tactic generator.",
-        default="lightning_logs/generator_random/checkpoints/last.ckpt",
+        default="lightning_logs/version_40/checkpoints/last.ckpt",
     )
     parser.add_argument(
         "--ret-ckpt-path",
         type=str,
         help="Checkpoint of the premise retriever.",
-        default="lightning_logs/retriever_random/checkpoints/last.ckpt",
+        default="lightning_logs/retriever_state-only_random/checkpoints/last.ckpt",
     )
     parser.add_argument("--length-penalty", type=float, default=-0.5)
     parser.add_argument("--temperature", type=float, default=0.5)
@@ -132,7 +132,7 @@ def main() -> None:
         "--timeout",
         type=int,
         default=600,
-        help="Maximum number of seconds the proof search can take (Default: 1200).",
+        help="Maximum number of seconds the proof search can take (Default: 600).",
     )
     parser.add_argument(
         "--max-num-expansions",
@@ -152,6 +152,9 @@ def main() -> None:
     logger.info(args)
 
     theorems, positions = get_theorems(args)
+
+    if args.model == "RetrivalAugmentedGenerator":
+        tac_gen = RetrivalAugmentedGenerator()
 
     prover = DistributedProver(
         args.model,

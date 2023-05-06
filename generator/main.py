@@ -1,6 +1,6 @@
 import os
 from loguru import logger
-from generator.model import TransformerTacticGenerator
+from generator.model import RetrivalAugmentedGenerator
 from generator.datamodule import GeneratorDataModule
 from pytorch_lightning.cli import LightningCLI
 
@@ -13,7 +13,7 @@ class CLI(LightningCLI):
 
 def main() -> None:
     logger.info(f"PID: {os.getpid()}")
-    cli = CLI(TransformerTacticGenerator, GeneratorDataModule)
+    cli = CLI(RetrivalAugmentedGenerator, GeneratorDataModule)
     print("Configuration: \n", cli.config)
 
 

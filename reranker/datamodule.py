@@ -36,7 +36,7 @@ class RerankerDataset(Dataset):
         self.max_seq_len = max_seq_len
         self.is_train = is_train
         self.tokenizer = tokenizer
-        self.reload_data()        
+        self.reload_data()
 
     def reload_data(self) -> None:
         self.data = list(
@@ -65,19 +65,25 @@ class RerankerDataset(Dataset):
                     if len(all_pos_premises) == 0:
                         continue
                     if not all_pos_premises.issubset(retrieved_premises):
-                        neg_premises = [p for p in retrieved_premises if p not in all_pos_premises]
+                        neg_premises = [
+                            p for p in retrieved_premises if p not in all_pos_premises
+                        ]
                     else:
                         last_idx = -1
                         for i, p in enumerate(retrieved_premises):
                             if p in all_pos_premises:
                                 last_idx = i
                                 break
-                        last_idx = max(last_idx, len(all_pos_premises) + self.num_negatives)
-                        neg_premises = [p for p in retrieved_premises[:last_idx] if p not in all_pos_premises] 
-                    for p in random.sample(neg_premises, self.num_negatives):
-                        data.append(
-                            {"state": state, "premise": p, "label": False}
+                        last_idx = max(
+                            last_idx, len(all_pos_premises) + self.num_negatives
                         )
+                        neg_premises = [
+                            p
+                            for p in retrieved_premises[:last_idx]
+                            if p not in all_pos_premises
+                        ]
+                    for p in random.sample(neg_premises, self.num_negatives):
+                        data.append({"state": state, "premise": p, "label": False})
                 else:
                     data.append(
                         {
@@ -126,7 +132,9 @@ class RerankerDataset(Dataset):
 
             batch["seq_ids"] = tokenized_seq.input_ids
             batch["seq_mask"] = tokenized_seq.attention_mask
-            batch["label"] = torch.tensor([ex["label"] for ex in examples], dtype=torch.float32)
+            batch["label"] = torch.tensor(
+                [ex["label"] for ex in examples], dtype=torch.float32
+            )
         else:
             num_retrieved = len(examples[0]["seqs"])
             for i in range(num_retrieved):
@@ -143,7 +151,7 @@ class RerankerDataset(Dataset):
         for k in examples[0].keys():
             if k not in batch:
                 batch[k] = [ex[k] for ex in examples]
-        
+
         return batch
 
 

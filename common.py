@@ -332,6 +332,12 @@ def format_state(s: str) -> str:
         return s
 
 
+def format_augmented_state(s: str, premises: List[Premise]):
+    s = format_state(s)
+    premises = "\n\n".join(p.serialize() for p in premises)
+    return f"$STATE$\n{s}\n$PREMISES$\n{premises}"
+
+
 def get_optimizers(
     parameters, trainer: pl.Trainer, lr: float, warmup_steps: int
 ) -> Dict[str, Any]:
@@ -375,9 +381,9 @@ def get_optimizers(
 
 
 def _is_deepspeed_checkpoint(path: str):
-    if not path.exists():
+    if not os.path.exists(path):
         raise FileExistsError(f"Checkpoint {path} does not exist.")
-    return path.is_dir() and (path / "zero_to_fp32.py").exists()
+    return os.path.isdir(path) and os.path.exists(os.path.join(path, "zero_to_fp32.py"))
 
 
 def load_checkpoint(model_cls, ckpt_path: str, device, freeze: bool):

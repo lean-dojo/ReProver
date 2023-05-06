@@ -38,7 +38,7 @@ class PremiseReranker(pl.LightningModule):
         # self.encoder = AutoModel.from_pretrained(model_name)
         h = self.encoder.config.hidden_size
         self.classifier = nn.Linear(h, 1)
-        
+
         self.metrics = {
             "train": {
                 "accuracy": BinaryAccuracy(),
@@ -52,7 +52,7 @@ class PremiseReranker(pl.LightningModule):
         for split, metrics in self.metrics.items():
             for name, m in metrics.items():
                 self.add_module(f"{name}_{split}", m)
-        
+
         self.predict_step_outputs = []
 
     def _cpu_checkpointing_enabled(self) -> bool:
@@ -90,7 +90,7 @@ class PremiseReranker(pl.LightningModule):
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:  # type: ignore
         logits = self(batch["seq_ids"], batch["seq_mask"])
         loss = F.binary_cross_entropy_with_logits(logits, batch["label"])
-        
+
         self.log(
             "loss_train", loss, on_epoch=True, sync_dist=True, batch_size=len(batch)
         )
@@ -107,7 +107,9 @@ class PremiseReranker(pl.LightningModule):
             assert self.trainer is not None
             logger.info(f"Logging to {self.trainer.log_dir}")
 
-    def _log_metrics(self, split: str, logits: torch.Tensor, label: torch.Tensor) -> None:
+    def _log_metrics(
+        self, split: str, logits: torch.Tensor, label: torch.Tensor
+    ) -> None:
         for name, metric in self.metrics[split].items():
             metric(logits.to(torch.float32), label.to(torch.float32))
             self.log(f"{name}_{split}", metric, on_step=False, on_epoch=True)

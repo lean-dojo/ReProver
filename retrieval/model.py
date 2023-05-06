@@ -235,7 +235,11 @@ class PremiseRetriever(pl.LightningModule):
         context_emb = self._encode(batch["context_ids"], batch["context_mask"])
         assert not self.embeddings_staled
         retrieved_premises, scores = self.corpus.get_nearest_premises(
-            self.corpus_embeddings, batch["context"], context_emb, self.num_retrieved, self.accessible_premises_only,
+            self.corpus_embeddings,
+            batch["context"],
+            context_emb,
+            self.num_retrieved,
+            self.accessible_premises_only,
         )
 
         # Evaluation & logging.
@@ -301,7 +305,11 @@ class PremiseRetriever(pl.LightningModule):
         context_emb = self._encode(batch["context_ids"], batch["context_mask"])
         assert not self.embeddings_staled
         retrieved_premises, scores = self.corpus.get_nearest_premises(
-            self.corpus_embeddings, batch["context"], context_emb, self.num_retrieved, self.accessible_premises_only,
+            self.corpus_embeddings,
+            batch["context"],
+            context_emb,
+            self.num_retrieved,
+            self.accessible_premises_only,
         )
         pred = (batch["context"], batch["all_pos_premises"], retrieved_premises, scores)
         self.predict_step_outputs.append(pred)
@@ -329,19 +337,20 @@ class PremiseRetriever(pl.LightningModule):
 
     def retrieve(
         self,
-        state: str,
+        state: List[str],
         file_name,
         theorem_full_name,
         theorem_pos,
-        tactic_prefix: str,
         k: int,
     ) -> Tuple[List[Premise], List[float]]:
         # """Retrieve ``k`` premises from ``corpus`` using ``state`` and ``tactic_prefix`` as context."""
-        raise NotImplementedError
-        assert tactic_prefix.endswith(MARK_START_SYMBOL)
-        ctx = Context(file_name, theorem_full_name, theorem_pos, tactic_prefix, state)
+        ctx = [
+            Context(*_)
+            for _ in zip_strict(file_name, theorem_full_name, theorem_pos, state)
+        ]
         ctx_tokens = self.tokenizer(
-            ctx.serialize(),
+            [_.serialize() for _ in ctx],
+            padding="longest",
             max_length=self.max_seq_len,
             truncation=True,
             return_tensors="pt",
@@ -352,6 +361,10 @@ class PremiseRetriever(pl.LightningModule):
         )
         assert not self.embeddings_staled
         retrieved_premises, scores = self.corpus.get_nearest_premises(
-            self.corpus_embeddings, [ctx], context_emb, k, self.accessible_premises_only,
+            self.corpus_embeddings,
+            ctx,
+            context_emb,
+            k,
+            self.accessible_premises_only,
         )
-        return retrieved_premises[0], scores[0]
+        return retrieved_premises, scores

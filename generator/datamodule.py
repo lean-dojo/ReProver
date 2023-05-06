@@ -8,22 +8,29 @@ import pytorch_lightning as pl
 from typing import Optional, List, Dict, Any
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer, ByT5Tokenizer
-from common import format_state, format_tactic, Example, Batch
+from common import (
+    format_state,
+    format_augmented_state,
+    format_tactic,
+    remove_marks,
+    Example,
+    Batch,
+)
 
 
 class GeneratorDataset(Dataset):
     def __init__(
         self,
         data_path: str,
+        keep_marks: bool,
         preds: List[Dict[str, Any]],
-        num_retrieved: int,
         max_seq_len: int,
         tokenizer: ByT5Tokenizer,
         is_train: bool,
     ) -> None:
         super().__init__()
+        self.keep_marks = keep_marks
         self.preds = preds
-        self.num_retrieved = num_retrieved
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
         self.is_train = is_train
@@ -34,20 +41,29 @@ class GeneratorDataset(Dataset):
         for thm in tqdm(json.load(open(data_path))):
             repo_name = thm["url"].split("/")[-1]
             file_path = os.path.join(repo_name, thm["file_path"])
-            
+
+            if not self.is_train:
+                data.append(thm)
+                continue
+
             for tac in thm["traced_tactics"]:
                 state = format_state(tac["state_before"])
-                pred = self.preds[(file_path, thm["full_name"], state)]
-                retrieved_premises = "\n\n".join(p.serialize() for p in pred["retrieved_premises"][:self.num_retrieved])
-                state_and_premises = f"$STATE$\n{state}\n$PREMISES$\n{retrieved_premises}"
+                if self.preds is not None:
+                    pred = self.preds[(file_path, thm["full_name"], state)]
+                    state = format_augmented_state(
+                        tac["state_before"], pred["retrieved_premises"]
+                    )
+                tactic = format_tactic(*tac["annotated_tactic"])
+                if not self.keep_marks:
+                    tactic = remove_marks(tactic)
                 data.append(
                     {
                         "url": thm["url"],
                         "commit": thm["commit"],
                         "file_path": thm["file_path"],
                         "full_name": thm["full_name"],
-                        "state_and_premises": state_and_premises,
-                        "tactic": format_tactic(*tac["annotated_tactic"]),
+                        "state": state,
+                        "tactic": tactic,
                     }
                 )
 
@@ -61,33 +77,34 @@ class GeneratorDataset(Dataset):
         return self.data[idx]
 
     def collate(self, examples: List[Example]) -> Batch:
-        state_and_premises = [ex["state_and_premises"] for ex in examples]
-        tokenized_state_and_premises = self.tokenizer(
-            state_and_premises,
-            padding="longest",
-            max_length=self.max_seq_len,
-            truncation=True,
-            return_tensors="pt",
-        )
-        tactic = [ex["tactic"] for ex in examples]
-        tokenized_tactic = self.tokenizer(
-            tactic,
-            padding="longest",
-            max_length=self.max_seq_len,
-            truncation=True,
-            return_tensors="pt",
-        )
-        tactic_ids = tokenized_tactic.input_ids
-        tactic_ids[tactic_ids == self.tokenizer.pad_token_id] = -100
+        batch = {}
+        
+        if self.is_train:
+            state = [ex["state"] for ex in examples]
+            tokenized_state = self.tokenizer(
+                state,
+                padding="longest",
+                max_length=self.max_seq_len,
+                truncation=True,
+                return_tensors="pt",
+            )
+            tactic = [ex["tactic"] for ex in examples]
+            tokenized_tactic = self.tokenizer(
+                tactic,
+                padding="longest",
+                max_length=self.max_seq_len,
+                truncation=True,
+                return_tensors="pt",
+            )
+            tactic_ids = tokenized_tactic.input_ids
+            tactic_ids[tactic_ids == self.tokenizer.pad_token_id] = -100
 
-        batch = {
-            "state_and_premises": state_and_premises,
-            "state_and_premises_ids": tokenized_state_and_premises.input_ids,
-            "state_and_premises_mask": tokenized_state_and_premises.attention_mask,
-            "tactic": tactic,
-            "tactic_ids": tactic_ids,
-            "tactic_mask": tokenized_tactic.attention_mask,
-        }
+            batch["state"] = state
+            batch["state_ids"] = tokenized_state.input_ids
+            batch["state_mask"] = tokenized_state.attention_mask
+            batch["tactic"] = tactic
+            batch["tactic_ids"] = tactic_ids
+            batch["tactic_mask"] = tokenized_tactic.attention_mask
 
         # Copy other fields.
         for k in examples[0].keys():
@@ -101,25 +118,32 @@ class GeneratorDataModule(pl.LightningDataModule):
     def __init__(
         self,
         data_path: str,
-        preds_path: str,
-        num_retrieved: int,
+        keep_marks: bool,
+        preds_path: Optional[str],
         model_name: str,
         batch_size: int,
+        eval_batch_size: int,
         max_seq_len: int,
         num_workers: int,
     ) -> None:
         super().__init__()
         self.data_path = data_path
-        self.num_retrieved = num_retrieved
+        self.keep_marks = keep_marks
         self.batch_size = batch_size
+        self.eval_batch_size = eval_batch_size
         self.max_seq_len = max_seq_len
         self.num_workers = num_workers
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-        self.preds = {}
-        for pred in pickle.load(open(preds_path, "rb")):
-            ctx = pred["context"]
-            self.preds[ctx.path, ctx.theorem_full_name, ctx.state] = pred
+        if preds_path is None:
+            logger.info("Without retrieval data")
+            self.preds = None
+        else:
+            logger.info("With retrieval data")
+            self.preds = {}
+            for pred in pickle.load(open(preds_path, "rb")):
+                ctx = pred["context"]
+                self.preds[ctx.path, ctx.theorem_full_name, ctx.state] = pred
 
     def prepare_data(self) -> None:
         pass
@@ -128,8 +152,8 @@ class GeneratorDataModule(pl.LightningDataModule):
         if stage in (None, "fit"):
             self.ds_train = GeneratorDataset(
                 os.path.join(self.data_path, "train.json"),
+                self.keep_marks,
                 self.preds,
-                self.num_retrieved,
                 self.max_seq_len,
                 self.tokenizer,
                 is_train=True,
@@ -138,8 +162,8 @@ class GeneratorDataModule(pl.LightningDataModule):
         if stage in (None, "fit", "validate"):
             self.ds_val = GeneratorDataset(
                 os.path.join(self.data_path, "val.json"),
+                self.keep_marks,
                 self.preds,
-                self.num_retrieved,
                 self.max_seq_len,
                 self.tokenizer,
                 is_train=False,
@@ -159,7 +183,7 @@ class GeneratorDataModule(pl.LightningDataModule):
     def val_dataloader(self) -> DataLoader:
         return DataLoader(
             self.ds_val,
-            self.batch_size,
+            self.eval_batch_size,
             num_workers=self.num_workers,
             collate_fn=self.ds_val.collate,
             shuffle=False,
@@ -171,8 +195,8 @@ class GeneratorDataModule(pl.LightningDataModule):
 if __name__ == "__main__":
     dm = GeneratorDataModule(
         data_path="data/lean_bench/random/",
+        keep_marks=True,
         preds_path="lightning_logs/version_31/predictions.pickle",
-        num_retrieved=100,
         model_name="google/byt5-small",
         batch_size=8,
         max_seq_len=2048,
@@ -186,8 +210,8 @@ if __name__ == "__main__":
     ):
         if i == 0:
             print(data_batch)
-        print("state_and_premises: ", data_batch["state_and_premises_ids"].size())
-        #if data_batch["tactic_ids"].size(1) > 256:
+        print("state: ", data_batch["state_ids"].size())
+        # if data_batch["tactic_ids"].size(1) > 256:
         #    print("tactic: ", data_batch["tactic_ids"].size())
 
     for i, data_batch in tqdm(enumerate(dm.val_dataloader())):
