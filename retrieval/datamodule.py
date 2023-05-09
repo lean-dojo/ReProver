@@ -56,7 +56,7 @@ class RetrievalDataset(Dataset):
             file_path = os.path.join(repo_name, thm["file_path"])
             deps = self.corpus.get_dependencies(file_path)
 
-            for tac in thm["traced_tactics"]:
+            for i, tac in enumerate(thm["traced_tactics"]):
                 _, provenances = tac["annotated_tactic"]
                 all_pos_premises = set()
 
@@ -80,7 +80,11 @@ class RetrievalDataset(Dataset):
 
                 if not self.is_train:
                     data.append(
-                        {"context": context, "all_pos_premises": all_pos_premises}
+                        {
+                            "context": context,
+                            "all_pos_premises": all_pos_premises,
+                            "tac_idx": i,
+                        }
                     )
                 else:
                     for pos_premise in all_pos_premises:
@@ -89,6 +93,7 @@ class RetrievalDataset(Dataset):
                                 "context": context,
                                 "pos_premise": pos_premise,
                                 "all_pos_premises": all_pos_premises,
+                                "tac_idx": i,
                             }
                         )
 

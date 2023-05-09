@@ -5,7 +5,6 @@ import json
 import torch
 import tempfile
 import networkx as nx
-from tqdm import tqdm
 from loguru import logger
 from lean_dojo import Pos
 import pytorch_lightning as pl
@@ -187,9 +186,8 @@ class Corpus:
         self.all_premises = []
 
         logger.info(f"Building the corpus from {jsonl_path}")
-        lines = list(open(jsonl_path))
 
-        for line in tqdm(lines):
+        for line in open(jsonl_path):
             file_data = json.loads(line)
             path = file_data["path"]
             assert not dep_graph.has_node(path)

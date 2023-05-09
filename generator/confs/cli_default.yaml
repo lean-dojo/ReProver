@@ -12,7 +12,7 @@ trainer:
   gradient_clip_val: 1.0
   max_steps: 500000
   check_val_every_n_epoch: 2
-  limit_val_batches: 1
+  num_sanity_val_steps: 0
   callbacks:
     - class_path: pytorch_lightning.callbacks.LearningRateMonitor
       init_args: 
@@ -21,37 +21,31 @@ trainer:
       init_args:
         verbose: true
         save_last: true
-        save_top_k: 3
+        save_top_k: 2
         monitor: val_top1_acc
         auto_insert_metric_name: true
         mode: max
-    - class_path: pytorch_lightning.callbacks.EarlyStopping
-      init_args:
-        monitor: val_top1_acc
-        patience: 3
-        mode: max
-        verbose: true
+        save_on_train_epoch_end: true
 
 model:
   model_name: google/byt5-small
   lr: 5e-4
   warmup_steps: 2000
-  num_beams: 8
+  num_beams: 1
   length_penalty: -0.5
   ret_ckpt_path: lightning_logs/retriever_state-only_random/checkpoints/last.ckpt
   eval_num_retrieved: 100
   eval_discount_length: false
-  eval_num_cpus: 32
-  eval_timeout: 600
+  eval_num_cpus: 10
+  eval_timeout: 900
   eval_max_num_expansions: 512
-  eval_num_sampled_tactics: 16
-
+  eval_num_sampled_tactics: 32
 
 data:
   data_path: data/lean_bench/random/
   keep_marks: true
-  preds_path: lightning_logs/version_31/predictions.pickle
+  preds_path: lightning_logs/retriever_state-only_random/predictions.pickle
   batch_size: 8  # effective_batch_size == batch_size * accumulate_grad_batches * devices
-  eval_batch_size: 256
+  eval_batch_size: 64
   max_seq_len: 2048
   num_workers: 8

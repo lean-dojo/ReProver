@@ -1,11 +1,15 @@
+import os
+import re
 import pdb
 import openai
 import math
 import torch
+from subprocess import CalledProcessError
 import itertools
 from time import monotonic
 from copy import copy
 from lean_dojo import Pos
+from lean_dojo.utils import execute
 from loguru import logger
 from transformers import T5ForConditionalGeneration, AutoTokenizer
 import pytorch_lightning as pl
@@ -14,7 +18,6 @@ from torchmetrics import Metric
 from abc import ABC, abstractmethod
 from retrieval.model import PremiseRetriever
 from transformers.generation import BeamHypotheses
-from prover.proof_search import DistributedProver
 from typing import List, Dict, Any, Optional, Tuple, Union
 
 
@@ -113,6 +116,7 @@ class RetrivalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         eval_max_num_expansions: int,
         eval_num_sampled_tactics: int,
         max_seq_len: int,
+        # data_path: str,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -127,6 +131,7 @@ class RetrivalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         self.eval_max_num_expansions = eval_max_num_expansions
         self.eval_num_sampled_tactics = eval_num_sampled_tactics
         self.max_seq_len = max_seq_len
+        # self.data_path = data_path
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.generator = T5ForConditionalGeneration.from_pretrained(model_name)
@@ -206,30 +211,57 @@ class RetrivalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             logger.info(f"Logging to {self.trainer.log_dir}")
 
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> None:
+        state_ids = batch["state_ids"]
+        state_mask = batch["state_mask"]
+        tactic_ids = batch["tactic_ids"]
+
+        loss = self(state_ids, state_mask, tactic_ids)
+        self.log(f"loss_val", loss, on_step=False, on_epoch=True, sync_dist=True)
+        self._log_io_texts("val", state_ids, tactic_ids)
+
         # Generate topk tactic candidates via Beam Search.
-        
-        prover = DistributedProver(
-            self,
-            num_cpus=self.eval_num_cpus,
-            num_gpus=0,
-            timeout=self.eval_timeout,
-            max_num_expansions=self.eval_max_num_expansions,
-            num_sampled_tactics=self.eval_num_sampled_tactics,
+        output = self.generator.generate(
+            input_ids=state_ids,
+            attention_mask=state_mask,
+            max_length=self.max_seq_len,
+            num_beams=self.num_beams,
+            do_sample=False,
+            num_return_sequences=self.num_beams,
+            early_stopping=False,
         )
-        pdb.set_trace()
-        results = prover.search_unordered(theorems, positions)
-        
-        num_proved = num_failed = num_discarded = 0
-        for r in results:
-            if r is None:
-                num_discarded += 1
-            elif r.status == Status.PROVED:
-                num_proved += 1
-            else:
-                num_failed += 1
-        acc = float(num_proved) / (num_proved + num_failed)
-        self.log("val_success_rate", acc, on_step=False, on_epoch=True)
-                
+        output_text = self.tokenizer.batch_decode(output, skip_special_tokens=True)
+        batch_size = state_ids.size(0)
+        assert len(output_text) == batch_size * self.num_beams
+        tactics_pred = [
+            output_text[i * self.num_beams : (i + 1) * self.num_beams]
+            for i in range(batch_size)
+        ]
+
+        tb = self.logger.experiment
+        msg = "\n".join(tactics_pred[0])
+        tb.add_text(f"val_preds", f"```\n{msg}\n```", self.global_step)
+
+        # Log the topk accuracies.
+        for k in range(1, self.num_beams + 1):
+            topk_acc = self.topk_accuracies[k]
+            topk_acc(tactics_pred, batch["tactic"])
+            self.log(f"val_top{k}_acc", topk_acc, on_step=False, on_epoch=True)
+
+    def on_validation_epoch_end(self) -> None:
+        # Generate topk tactic candidates via Beam Search.
+        num_theorems = 128
+        cmd = f"python prover/evaluate.py --data-path data/lean_bench/premise/ --num-cpus {self.eval_num_cpus} --num-gpus 0 --length-penalty {self.length_penalty} --num-theorems {num_theorems} --max-num-expansions {self.eval_max_num_expansions} --num-sampled-tactics {self.eval_num_sampled_tactics} --timeout {self.eval_timeout} --ckpt_path {self.trainer.log_dir}/checkpoints/last.ckpt/"
+        logger.info(cmd)
+        try:
+            _, err = execute(cmd, capture_output=True)
+        except CalledProcessError as ex:
+            logger.info("Retry")
+            _, err = execute(cmd, capture_output=True)
+        m = re.search(r"Pass@1: (\S+)", err)
+        assert m is not None, err
+        acc = float(m.group(1))
+        self.log("val_pass@1", acc, on_step=False, on_epoch=True)
+
     def generate(
         self,
         state: str,
@@ -253,7 +285,11 @@ class RetrivalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         logger.debug(state)
         if self.retriever is not None:
             retrieved_premises, _ = self.retriever.retrieve(
-                state, file_path, theorem_full_name, theorem_pos, self.eval_num_retrieved
+                state,
+                file_path,
+                theorem_full_name,
+                theorem_pos,
+                self.eval_num_retrieved,
             )
             state = [
                 format_augmented_state(s, premises)
@@ -263,7 +299,7 @@ class RetrivalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         tokenized_state = self.tokenizer(
             state,
             padding="longest",
-            max_length=self.generator.max_seq_len,
+            max_length=self.max_seq_len,
             truncation=True,
             return_tensors="pt",
         )
@@ -282,11 +318,11 @@ class RetrivalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             num_samples,
             length_penalty=self.length_penalty,
             early_stopping=False,
-            max_length=self.generator.max_seq_len,
+            max_length=self.max_seq_len,
         )
 
         # Return the output.
-        raw_output_text = self.generator.tokenizer.batch_decode(
+        raw_output_text = self.tokenizer.batch_decode(
             sequences, skip_special_tokens=True
         )
         raw_scores = scores.tolist()
@@ -409,13 +445,13 @@ class RetrivalAugmentedGenerator(TacticGenerator, pl.LightningModule):
                     if next_token.item() == eos_token_id:
                         if beam_token_rank >= num_beams:
                             continue
-                        tac = self.generator.tokenizer.decode(
+                        tac = self.tokenizer.decode(
                             input_ids[batch_beam_idx], skip_special_tokens=True
                         )
                         length = 1 + len(tac)
                         if self.eval_discount_length:
                             for m in find_marks(tac, include_symbols=True):
-                                length -= len(m.group()) 
+                                length -= len(m.group())
                         beam_hyp.add(
                             input_ids[batch_beam_idx].clone(), next_score.item(), length
                         )
@@ -447,7 +483,6 @@ class RetrivalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             past_key_values = self.generator._reorder_cache(
                 outputs.past_key_values, next_beam_indices
             )
-            self._reorder_retrieved_premises(next_beam_indices)
             beam_scores = next_beam_scores
 
             if input_ids.size(-1) >= max_length - 1 or all(done):
@@ -463,13 +498,11 @@ class RetrivalAugmentedGenerator(TacticGenerator, pl.LightningModule):
                 batch_beam_idx = batch_idx * num_beams + beam_id
                 final_score = beam_scores[batch_beam_idx].item()
                 final_tokens = input_ids[batch_beam_idx]
-                tac = self.generator.tokenizer.decode(
-                    final_tokens, skip_special_tokens=True
-                )
+                tac = self.tokenizer.decode(final_tokens, skip_special_tokens=True)
                 length = 1 + len(tac)
                 if self.eval_discount_length:
                     for m in find_marks(tac, include_symbols=True):
-                        length -= len(m.group()) 
+                        length -= len(m.group())
                 beam_hyp.add(final_tokens, final_score, length)
 
         # Select the best hypotheses.
@@ -493,7 +526,6 @@ class RetrivalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             sequences[i, len(seq)] = eos_token_id
             scores[i] = s
 
-        logger.debug(f"Beam search finished in {monotonic() - self.time_start:.2f} s")
         return sequences, scores
 
 

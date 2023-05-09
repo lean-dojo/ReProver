@@ -42,10 +42,6 @@ class GeneratorDataset(Dataset):
             repo_name = thm["url"].split("/")[-1]
             file_path = os.path.join(repo_name, thm["file_path"])
 
-            if not self.is_train:
-                data.append(thm)
-                continue
-
             for tac in thm["traced_tactics"]:
                 state = format_state(tac["state_before"])
                 if self.preds is not None:
@@ -77,34 +73,32 @@ class GeneratorDataset(Dataset):
         return self.data[idx]
 
     def collate(self, examples: List[Example]) -> Batch:
-        batch = {}
-        
-        if self.is_train:
-            state = [ex["state"] for ex in examples]
-            tokenized_state = self.tokenizer(
-                state,
-                padding="longest",
-                max_length=self.max_seq_len,
-                truncation=True,
-                return_tensors="pt",
-            )
-            tactic = [ex["tactic"] for ex in examples]
-            tokenized_tactic = self.tokenizer(
-                tactic,
-                padding="longest",
-                max_length=self.max_seq_len,
-                truncation=True,
-                return_tensors="pt",
-            )
-            tactic_ids = tokenized_tactic.input_ids
-            tactic_ids[tactic_ids == self.tokenizer.pad_token_id] = -100
+        state = [ex["state"] for ex in examples]
+        tokenized_state = self.tokenizer(
+            state,
+            padding="longest",
+            max_length=self.max_seq_len,
+            truncation=True,
+            return_tensors="pt",
+        )
+        tactic = [ex["tactic"] for ex in examples]
+        tokenized_tactic = self.tokenizer(
+            tactic,
+            padding="longest",
+            max_length=self.max_seq_len,
+            truncation=True,
+            return_tensors="pt",
+        )
+        tactic_ids = tokenized_tactic.input_ids
+        tactic_ids[tactic_ids == self.tokenizer.pad_token_id] = -100
 
-            batch["state"] = state
-            batch["state_ids"] = tokenized_state.input_ids
-            batch["state_mask"] = tokenized_state.attention_mask
-            batch["tactic"] = tactic
-            batch["tactic_ids"] = tactic_ids
-            batch["tactic_mask"] = tokenized_tactic.attention_mask
+        batch = {}
+        batch["state"] = state
+        batch["state_ids"] = tokenized_state.input_ids
+        batch["state_mask"] = tokenized_state.attention_mask
+        batch["tactic"] = tactic
+        batch["tactic_ids"] = tactic_ids
+        batch["tactic_mask"] = tokenized_tactic.attention_mask
 
         # Copy other fields.
         for k in examples[0].keys():

@@ -9,7 +9,6 @@ from lean_dojo import Theorem
 from typing import List, Tuple, Optional
 from lean_dojo import LeanGitRepo, Theorem, Pos, trace
 from prover.proof_search import Status, DistributedProver
-from generator.model import RetrivalAugmentedGenerator
 
 from common import set_logger
 
@@ -27,6 +26,7 @@ def get_theorems(args) -> Tuple[List[Theorem], List[Pos]]:
             args.file_path,
             args.full_name,
             args.name_filter,
+            args.num_theorems,
         )
 
 
@@ -36,6 +36,7 @@ def get_theorems_from_files(
     file_path: Optional[str],
     full_name: Optional[str],
     name_filter: Optional[str],
+    num_theorems: Optional[int],
 ) -> Tuple[List[Theorem], List[Pos]]:
     data = json.load(open(os.path.join(data_path, f"{split}.json")))
     theorems = []
@@ -58,6 +59,9 @@ def get_theorems_from_files(
             (str(t.file_path) + ":" + t.full_name).encode()
         ).hexdigest(),
     )
+    if num_theorems is not None:
+        theorems = theorems[:num_theorems]
+        positions = positions[:num_theorems]
     logger.info(f"{len(theorems)} theorems loaded from {data_path}")
     return theorems, positions
 
@@ -79,7 +83,6 @@ def get_theorems_from_repo(url: str, commit: str) -> Tuple[List[Theorem], List[P
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-id", type=str, default="default")
-    parser.add_argument("--output-dir", type=str, default="evals/")
     parser.add_argument(
         "--split",
         type=str,
@@ -97,37 +100,20 @@ def main() -> None:
     parser.add_argument("--file-path", type=str)
     parser.add_argument("--full-name", type=str)
     parser.add_argument("--name-filter", type=str)
+    parser.add_argument("--num-theorems", type=int)
     parser.add_argument(
-        "--model",
-        type=str,
-        choices=[
-            "RetrivalAugmentedGenerator",
-            "GPT4TacticGenerator",
-        ],
-        default="RetrivalAugmentedGenerator",
-    )
-    parser.add_argument(
-        "--gen-ckpt-path",
+        "--ckpt_path",
+        required=True,
         type=str,
         help="Checkpoint of the tactic generator.",
-        default="lightning_logs/version_40/checkpoints/last.ckpt",
-    )
-    parser.add_argument(
-        "--ret-ckpt-path",
-        type=str,
-        help="Checkpoint of the premise retriever.",
-        default="lightning_logs/retriever_state-only_random/checkpoints/last.ckpt",
     )
     parser.add_argument("--length-penalty", type=float, default=-0.5)
-    parser.add_argument("--temperature", type=float, default=0.5)
-    parser.add_argument("--retrieval-weight", type=float, default=0.0)
     parser.add_argument(
         "--num-sampled-tactics",
         type=int,
         default=32,
         help="Number of tactics to sample at each node during proof search (Default: 5).",
     )
-    # Follow the setup in PACT.
     parser.add_argument(
         "--timeout",
         type=int,
@@ -153,16 +139,9 @@ def main() -> None:
 
     theorems, positions = get_theorems(args)
 
-    if args.model == "RetrivalAugmentedGenerator":
-        tac_gen = RetrivalAugmentedGenerator()
-
     prover = DistributedProver(
-        args.model,
-        args.gen_ckpt_path,
-        args.ret_ckpt_path,
+        args.ckpt_path,
         args.length_penalty,
-        args.temperature,
-        args.retrieval_weight,
         num_cpus=args.num_cpus,
         num_gpus=args.num_gpus,
         timeout=args.timeout,
@@ -184,6 +163,7 @@ def main() -> None:
     logger.info(
         f"Evaluation done! {num_proved} theorems proved, {num_failed} theorems failed, {num_discarded} non-theorems discarded"
     )
+    logger.info(f"Pass@1: {num_proved / (num_proved + num_failed)}")
 
     if args.exp_id is not None:
         pickle_path = f"{args.exp_id}_results.pickle"

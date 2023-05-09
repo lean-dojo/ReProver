@@ -19,13 +19,12 @@ from lean_dojo import (
     DojoInitError,
     DojoCrashError,
 )
-from copy import deepcopy
 from loguru import logger
 from dataclasses import dataclass
 from ray.util.actor_pool import ActorPool
 from ray.util.queue import Queue, Empty
 from typing import List, Optional, Tuple
-
+from generator.model import RetrivalAugmentedGenerator
 
 from common import zip_strict
 from prover.search_tree import *
@@ -215,7 +214,7 @@ class BestFirstSearchProver:
             )
             self.check_invariants()
 
-    def _generate_tactics(self, ts: str, use_external: bool) -> List[Tuple[str, float]]:
+    def _generate_tactics(self, ts: str) -> List[Tuple[str, float]]:
         t0 = time.monotonic()
 
         num_goals = ts.count("⊢")
@@ -223,9 +222,7 @@ class BestFirstSearchProver:
         if num_goals == 1:
             suggestions = self.tac_gen.generate(
                 state=ts,
-                file_path=os.path.join(
-                    self.theorem.repo.name, self.theorem.file_path
-                ),
+                file_path=os.path.join(self.theorem.repo.name, self.theorem.file_path),
                 theorem_full_name=self.theorem.full_name,
                 theorem_pos=self.posision,
                 num_samples=self.num_sampled_tactics,
@@ -355,14 +352,17 @@ class BestFirstSearchProver:
 class CpuProver(BestFirstSearchProver):
     def __init__(
         self,
-        tac_gen,
+        ckpt_path: str,
         timeout: int,
         max_num_expansions: int,
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
+        tac_gen = RetrivalAugmentedGenerator.load(
+            ckpt_path, device=torch.device("cpu"), freeze=True
+        )
         super().__init__(
-            deepcopy(tac_gen),
+            tac_gen,
             timeout,
             max_num_expansions,
             num_sampled_tactics,
@@ -501,7 +501,8 @@ class GpuTacticGenerator:
 class DistributedProver:
     def __init__(
         self,
-        tac_gen,
+        ckpt_path: str,
+        length_penalty: float,
         num_cpus: int,
         num_gpus: int,
         timeout: int,
@@ -511,6 +512,8 @@ class DistributedProver:
     ) -> None:
         self.distributed = num_cpus > 1
         if not self.distributed:
+            raise NotImplementedError
+            tac_gen = RetrivalAugmentedGenerator
             self.prover = BestFirstSearchProver(
                 tac_gen, timeout, max_num_expansions, num_sampled_tactics, debug
             )
@@ -544,10 +547,9 @@ class DistributedProver:
         elif num_gpus == 0:
             logger.info(f"Launching {num_cpus} CPU workers.")
             # CPUs only.
-            tac_gen = ray.put(tac_gen)
             provers = [
                 CpuProver.remote(
-                    tac_gen,
+                    ckpt_path,
                     timeout=timeout,
                     max_num_expansions=max_num_expansions,
                     num_sampled_tactics=num_sampled_tactics,
