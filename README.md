@@ -107,9 +107,9 @@ premises = [
   "<a>polynomial.X_sub_C_ne_zero</a> theorem X_sub_C_ne_zero (r : R) : X - C r ≠ 0",
   "<a>forall_true_iff</a> theorem forall_true_iff : (α → true) ↔ true",
   "def <a>nat.gcd</a> : nat → nat → nat\n| 0        y := y\n| (succ x) y := have y % succ x < succ x, from mod_lt _ $ succ_pos _,\n                gcd (y % succ x) (succ x)",
-  "@[simp] theorem <a>nat.gcd_zero_left</a> (x : nat) : gcd 0 x = x := by simp [gcd]",
-  "@[simp] theorem <a>nat.gcd_succ</a> (x y : nat) : gcd (succ x) y = gcd (y % succ x) (succ x) :=\nby simp [gcd]",
-  "@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0 :=\nby rw [mod_eq_sub_mod (le_refl _), nat.sub_self, zero_mod]",
+  "@[simp] theorem <a>nat.gcd_zero_left</a> (x : nat) : gcd 0 x = x",
+  "@[simp] theorem <a>nat.gcd_succ</a> (x y : nat) : gcd (succ x) y = gcd (y % succ x) (succ x)",
+  "@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0",
 ]  # A corpus of premises to retrieve from.
 
 @torch.no_grad()
@@ -148,8 +148,7 @@ def <a>nat.gcd</a> : nat → nat → nat
 | (succ x) y := have y % succ x < succ x, from mod_lt _ $ succ_pos _,
                 gcd (y % succ x) (succ x)
 
-@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0 :=
-by rw [mod_eq_sub_mod (le_refl _), nat.sub_self, zero_mod]
+@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0
 ```
 
 
@@ -165,7 +164,7 @@ model = AutoModelForSeq2SeqLM.from_pretrained("kaiyuy/leandojo-lean3-retriever-t
 state = "n : ℕ\n⊢ gcd n n = n"
 retrieved_premises = [
   "def <a>nat.gcd</a> : nat → nat → nat\n| 0        y := y\n| (succ x) y := have y % succ x < succ x, from mod_lt _ $ succ_pos _,\n                gcd (y % succ x) (succ x)",
-  "@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0 :=\nby rw [mod_eq_sub_mod (le_refl _), nat.sub_self, zero_mod]",
+  "@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0",
 ]
 input = "\n\n".join(retrieved_premises + [state])
 print("------ INPUT ------\n", input)
@@ -202,8 +201,7 @@ Expected output:
 | (succ x) y := have y % succ x < succ x, from mod_lt _ $ succ_pos _,
                 gcd (y % succ x) (succ x)
 
-@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0 :=
-by rw [mod_eq_sub_mod (le_refl _), nat.sub_self, zero_mod]
+@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0
 
 n : ℕ
 ⊢ gcd n n = n
@@ -212,8 +210,8 @@ n : ℕ
 cases n
 
 cases n
-induction n with n ih
 simp [<a>nat.gcd</a>]
+induction n with n ih
 induction n with n IH
 ```
 
