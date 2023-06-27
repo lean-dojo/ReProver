@@ -24,14 +24,14 @@ Under review, NeurIPS (Datasets and Benchmarks Track), 2023
 ## Quick Links
 
   - [LeanDojo Website](https://leandojo.org/)
-  - [Using Pretrained Models on Hugging Face](#using-pretrained-models-on-hugging-face)
+  - [Using Trained Models on Hugging Face](#using-trained-models-on-hugging-face)
   - [Requirements](#requirements)
   - [Premise Selection](#premise-selection)
   - [Theorem Proving](#theorem-proving)
   - [Questions and Bugs](#questions-and-bugs)
 
 
-## Using Pretrained Models on Hugging Face
+## Using Trained Models on Hugging Face
 
 | Model name | Model architecture | Training data | Input | Output |
 | ---------- | ------------------ | ------------- | ----- | ------ |
@@ -40,7 +40,7 @@ Under review, NeurIPS (Datasets and Benchmarks Track), 2023
 | [kaiyuy/leandojo-lean4-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean4-tacgen-byt5-small) | ByT5 (encoder-decoder)  | LeanDojo Benchmark 4 (Lean 4) | Proof state | Tactic |
 | [kaiyuy/leandojo-lean3-retriever-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean3-retriever-tacgen-byt5-small) | ByT5 (encoder-decoder) | LeanDojo Benchmark (Lean 3) | Retrieved premises + proof state | Tactic |
 
-Our pretrained models are available on [HuggingFace Hub](https://huggingface.co/kaiyuy). With minimum dependencies (only [PyTorch](https://pytorch.org/) and [HuggingFace Transformers](https://huggingface.co/docs/transformers/index)), you can use our models to perform inference, finetune them on your own data, or plug them into your customized theorem proving pipeline. Below are some examples.
+Our trained models are available on [HuggingFace Hub](https://huggingface.co/kaiyuy). With minimum dependencies (only [PyTorch](https://pytorch.org/) and [HuggingFace Transformers](https://huggingface.co/docs/transformers/index)), you can use our models to perform inference, finetune them on your own data, or plug them into your customized theorem proving pipeline. Below are some examples.
 
 
 ### Tactic Generator
