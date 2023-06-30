@@ -40,12 +40,12 @@ Under review, NeurIPS (Datasets and Benchmarks Track), 2023
 | [kaiyuy/leandojo-lean4-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean4-tacgen-byt5-small) | ByT5 (encoder-decoder)  | LeanDojo Benchmark 4 (Lean 4) | Proof state | Tactic |
 | [kaiyuy/leandojo-lean3-retriever-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean3-retriever-tacgen-byt5-small) | ByT5 (encoder-decoder) | LeanDojo Benchmark (Lean 3) | Retrieved premises + proof state | Tactic |
 
-Our trained models are available on [HuggingFace Hub](https://huggingface.co/kaiyuy). With minimum dependencies (only [PyTorch](https://pytorch.org/) and [HuggingFace Transformers](https://huggingface.co/docs/transformers/index)), you can use our models to perform inference, finetune them on your own data, or plug them into your customized theorem proving pipeline. Below are some examples.
+Our trained models are available on HuggingFace Hub. With minimum dependencies (only [PyTorch](https://pytorch.org/) and [HuggingFace Transformers](https://huggingface.co/docs/transformers/index)), you can use our models to perform inference, finetune them on your own data, or plug them into your customized theorem proving pipeline. Below are some examples.
 
 
 ### Tactic Generator
 
-Our tactic generatoris a [ByT5](https://huggingface.co/docs/transformers/model_doc/byt5) model finetuned to generate tactics given a proof state.
+Our tactic generator is a [ByT5](https://huggingface.co/docs/transformers/model_doc/byt5) model finetuned to generate tactics given a proof state.
 ```python
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
