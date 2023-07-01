@@ -11,14 +11,17 @@ def main() -> None:
     args = parser.parse_args()
     logger.info(args)
 
-    repos = set()
-
+    url_commits = set()
     for path in glob(f"{args.data_path}/*/*/*.json"):
         data = json.load(open(path))
         for ex in data:
-            repo = LeanGitRepo(ex["url"], ex["commit"])
-            if not is_available_in_cache(repo):
-                repos.add(repo)
+            url_commits.add((ex["url"], ex["commit"]))
+
+    repos = set()
+    for url, commit in url_commits:
+        repo = LeanGitRepo(url, commit)
+        if not is_available_in_cache(repo):
+            repos.add(repo)
 
     logger.info(f"Repos to trace: {repos}")
 
