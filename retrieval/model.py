@@ -32,8 +32,8 @@ class PremiseRetriever(pl.LightningModule):
         model_name: str,
         lr: float,
         warmup_steps: int,
-        num_retrieved: int,
         max_seq_len: int,
+        num_retrieved: int = 100,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()

@@ -4,7 +4,7 @@
 
 Code for the paper:  
 
-[LeanDojo: Theorem Proving with Retrieval-Augmented Language Models](https://arxiv.org/abs/xxxx.xxxxx)      
+[LeanDojo: Theorem Proving with Retrieval-Augmented Language Models](https://leandojo.org/)      
 Under review, NeurIPS (Datasets and Benchmarks Track), 2023  
 [Kaiyu Yang](https://yangky11.github.io/), [Aidan Swope](https://aidanswope.com/about), [Alex Gu](https://minimario.github.io/), [Rahul Chalamala](https://rchalamala.github.io/),  
 [Peiyang Song](https://www.linkedin.com/in/peiyang-song-3279b3251/), [Shixing Yu](https://billysx.github.io/), [Saad Godil](https://www.linkedin.com/in/saad-godil-9728353/), [Ryan Prenger](https://www.linkedin.com/in/ryan-prenger-18797ba1/), [Anima Anandkumar](http://tensorlab.cms.caltech.edu/users/anima/)
@@ -13,7 +13,7 @@ Under review, NeurIPS (Datasets and Benchmarks Track), 2023
 @article{yang2023leandojo,
   title={{LeanDojo}: Theorem Proving with Retrieval-Augmented Language Models},
   author={Yang, Kaiyu and Swope, Aidan and Gu, Alex and Chalamala, Rahul and Song, Peiyang and Yu, Shixing and Godil, Saad and Prenger, Ryan and Anandkumar, Anima},
-  journal={arXiv preprint arXiv:xxxx.xxxxx},
+  journal={arXiv preprint arXiv:2306.15626},
   year={2023}
 }
 ```
@@ -24,14 +24,14 @@ Under review, NeurIPS (Datasets and Benchmarks Track), 2023
 ## Quick Links
 
   - [LeanDojo Website](https://leandojo.org/)
-  - [Using Pretrained Models on Hugging Face](#using-pretrained-models-on-hugging-face)
+  - [Using Trained Models on Hugging Face](#using-trained-models-on-hugging-face)
   - [Requirements](#requirements)
   - [Premise Selection](#premise-selection)
   - [Theorem Proving](#theorem-proving)
   - [Questions and Bugs](#questions-and-bugs)
 
 
-## Using Pretrained Models on Hugging Face
+## Using Trained Models on Hugging Face
 
 | Model name | Model architecture | Training data | Input | Output |
 | ---------- | ------------------ | ------------- | ----- | ------ |
@@ -40,12 +40,12 @@ Under review, NeurIPS (Datasets and Benchmarks Track), 2023
 | [kaiyuy/leandojo-lean4-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean4-tacgen-byt5-small) | ByT5 (encoder-decoder)  | LeanDojo Benchmark 4 (Lean 4) | Proof state | Tactic |
 | [kaiyuy/leandojo-lean3-retriever-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean3-retriever-tacgen-byt5-small) | ByT5 (encoder-decoder) | LeanDojo Benchmark (Lean 3) | Retrieved premises + proof state | Tactic |
 
-Our pretrained models are available on [HuggingFace Hub](https://huggingface.co/kaiyuy). With minimum dependencies (only [PyTorch](https://pytorch.org/) and [HuggingFace Transformers](https://huggingface.co/docs/transformers/index)), you can use our models to perform inference, finetune them on your own data, or plug them into your customized theorem proving pipeline. Below are some examples.
+Our trained models are available on HuggingFace Hub. With minimum dependencies (only [PyTorch](https://pytorch.org/) and [HuggingFace Transformers](https://huggingface.co/docs/transformers/index)), you can use our models to perform inference, finetune them on your own data, or plug them into your customized theorem proving pipeline. Below are some examples.
 
 
 ### Tactic Generator
 
-Our tactic generatoris a [ByT5](https://huggingface.co/docs/transformers/model_doc/byt5) model finetuned to generate tactics given a proof state.
+Our tactic generator is a [ByT5](https://huggingface.co/docs/transformers/model_doc/byt5) model finetuned to generate tactics given a proof state.
 ```python
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
@@ -107,9 +107,9 @@ premises = [
   "<a>polynomial.X_sub_C_ne_zero</a> theorem X_sub_C_ne_zero (r : R) : X - C r ≠ 0",
   "<a>forall_true_iff</a> theorem forall_true_iff : (α → true) ↔ true",
   "def <a>nat.gcd</a> : nat → nat → nat\n| 0        y := y\n| (succ x) y := have y % succ x < succ x, from mod_lt _ $ succ_pos _,\n                gcd (y % succ x) (succ x)",
-  "@[simp] theorem <a>nat.gcd_zero_left</a> (x : nat) : gcd 0 x = x := by simp [gcd]",
-  "@[simp] theorem <a>nat.gcd_succ</a> (x y : nat) : gcd (succ x) y = gcd (y % succ x) (succ x) :=\nby simp [gcd]",
-  "@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0 :=\nby rw [mod_eq_sub_mod (le_refl _), nat.sub_self, zero_mod]",
+  "@[simp] theorem <a>nat.gcd_zero_left</a> (x : nat) : gcd 0 x = x",
+  "@[simp] theorem <a>nat.gcd_succ</a> (x y : nat) : gcd (succ x) y = gcd (y % succ x) (succ x)",
+  "@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0",
 ]  # A corpus of premises to retrieve from.
 
 @torch.no_grad()
@@ -148,8 +148,7 @@ def <a>nat.gcd</a> : nat → nat → nat
 | (succ x) y := have y % succ x < succ x, from mod_lt _ $ succ_pos _,
                 gcd (y % succ x) (succ x)
 
-@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0 :=
-by rw [mod_eq_sub_mod (le_refl _), nat.sub_self, zero_mod]
+@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0
 ```
 
 
@@ -165,7 +164,7 @@ model = AutoModelForSeq2SeqLM.from_pretrained("kaiyuy/leandojo-lean3-retriever-t
 state = "n : ℕ\n⊢ gcd n n = n"
 retrieved_premises = [
   "def <a>nat.gcd</a> : nat → nat → nat\n| 0        y := y\n| (succ x) y := have y % succ x < succ x, from mod_lt _ $ succ_pos _,\n                gcd (y % succ x) (succ x)",
-  "@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0 :=\nby rw [mod_eq_sub_mod (le_refl _), nat.sub_self, zero_mod]",
+  "@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0",
 ]
 input = "\n\n".join(retrieved_premises + [state])
 print("------ INPUT ------\n", input)
@@ -202,8 +201,7 @@ Expected output:
 | (succ x) y := have y % succ x < succ x, from mod_lt _ $ succ_pos _,
                 gcd (y % succ x) (succ x)
 
-@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0 :=
-by rw [mod_eq_sub_mod (le_refl _), nat.sub_self, zero_mod]
+@[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0
 
 n : ℕ
 ⊢ gcd n n = n
@@ -212,8 +210,8 @@ n : ℕ
 cases n
 
 cases n
-induction n with n ih
 simp [<a>nat.gcd</a>]
+induction n with n ih
 induction n with n IH
 ```
 
