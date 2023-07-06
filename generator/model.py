@@ -122,7 +122,9 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             self.add_module(f"top{k}_acc_val", acc)
 
     @classmethod
-    def load(cls, ckpt_path: str, device, freeze: bool) -> "RetrievalAugmentedGenerator":
+    def load(
+        cls, ckpt_path: str, device, freeze: bool
+    ) -> "RetrievalAugmentedGenerator":
         return load_checkpoint(cls, ckpt_path, device, freeze)
 
     def forward(
