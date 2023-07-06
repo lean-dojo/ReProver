@@ -78,7 +78,7 @@ class TacticGenerator(ABC):
         raise NotImplementedError
 
 
-class RetrivalAugmentedGenerator(TacticGenerator, pl.LightningModule):
+class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
     def __init__(
         self,
         model_name: str,
@@ -122,7 +122,7 @@ class RetrivalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             self.add_module(f"top{k}_acc_val", acc)
 
     @classmethod
-    def load(cls, ckpt_path: str, device, freeze: bool) -> "RetrivalAugmentedGenerator":
+    def load(cls, ckpt_path: str, device, freeze: bool) -> "RetrievalAugmentedGenerator":
         return load_checkpoint(cls, ckpt_path, device, freeze)
 
     def forward(

@@ -28,7 +28,7 @@ from lean_dojo.constants import LEAN3_DEPS_DIR, LEAN4_DEPS_DIR
 
 from common import zip_strict
 from prover.search_tree import *
-from generator.model import RetrivalAugmentedGenerator
+from generator.model import RetrievalAugmentedGenerator
 
 
 @dataclass(frozen=True)
@@ -308,7 +308,7 @@ class CpuProver(BestFirstSearchProver):
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
-        tac_gen = RetrivalAugmentedGenerator.load(
+        tac_gen = RetrievalAugmentedGenerator.load(
             ckpt_path, device=torch.device("cpu"), freeze=True
         )
         if tac_gen.retriever is not None:
@@ -335,7 +335,7 @@ class GpuProver(BestFirstSearchProver):
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
-        tac_gen = RetrivalAugmentedGenerator.load(
+        tac_gen = RetrievalAugmentedGenerator.load(
             ckpt_path, device=torch.device("cuda"), freeze=True
         )
         if tac_gen.retriever is not None:
@@ -370,7 +370,7 @@ class DistributedProver:
         self.distributed = num_cpus > 1
         if not self.distributed:
             device = torch.device("cuda") if with_gpus else torch.device("cpu")
-            tac_gen = RetrivalAugmentedGenerator.load(
+            tac_gen = RetrievalAugmentedGenerator.load(
                 ckpt_path, device=device, freeze=True
             )
             if tac_gen.retriever is not None:
