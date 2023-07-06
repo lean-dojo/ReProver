@@ -4,7 +4,7 @@ from loguru import logger
 from pytorch_lightning.cli import LightningCLI
 
 from generator.datamodule import GeneratorDataModule
-from generator.model import RetrivalAugmentedGenerator
+from generator.model import RetrievalAugmentedGenerator
 
 
 class CLI(LightningCLI):
@@ -15,7 +15,7 @@ class CLI(LightningCLI):
 
 def main() -> None:
     logger.info(f"PID: {os.getpid()}")
-    cli = CLI(RetrivalAugmentedGenerator, GeneratorDataModule)
+    cli = CLI(RetrievalAugmentedGenerator, GeneratorDataModule)
     print("Configuration: \n", cli.config)
 
 
