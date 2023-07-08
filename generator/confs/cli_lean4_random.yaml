@@ -44,7 +44,7 @@ model:
 
 data:
   data_path: data/leandojo_benchmark_4/random/
-  corpus_path: data/leandojo_benchmark_4/corpus.jsonl
+  corpus_path: null
   keep_marks: true
   preds_path: null
   batch_size: 8  # effective_batch_size == batch_size * accumulate_grad_batches * devices
