@@ -129,13 +129,13 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
 
     def forward(
         self,
-        state_ids: torch.Tensor,
-        state_mask: torch.Tensor,
+        states_ids: torch.Tensor,
+        states_mask: torch.Tensor,
         tactic_ids: torch.Tensor,
     ) -> torch.Tensor:
         return self.generator(
-            input_ids=state_ids,
-            attention_mask=state_mask,
+            input_ids=states_ids,
+            attention_mask=states_mask,
             labels=tactic_ids,
         ).loss
 
@@ -145,8 +145,8 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
 
     def training_step(self, batch, batch_idx: int):
         loss = self(
-            batch["state_ids"],
-            batch["state_mask"],
+            batch["states_ids"],
+            batch["states_mask"],
             batch["tactic_ids"],
         )
         self.log(
@@ -157,7 +157,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             sync_dist=True,
             batch_size=len(batch),
         )
-        self._log_io_texts("train", batch["state_ids"], batch["tactic_ids"])
+        self._log_io_texts("train", batch["states_ids"], batch["tactic_ids"])
         return loss
 
     def configure_optimizers(self) -> Dict[str, Any]:
@@ -168,11 +168,11 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
     def _log_io_texts(
         self,
         split: str,
-        state_ids: torch.LongTensor,
+        states_ids: torch.LongTensor,
         tactic_ids: torch.LongTensor,
     ) -> None:
         tb = self.logger.experiment
-        inp = self.tokenizer.decode(state_ids[0], skip_special_tokens=True)
+        inp = self.tokenizer.decode(states_ids[0], skip_special_tokens=True)
         oup_ids = torch.where(
             tactic_ids[0] == -100, self.tokenizer.pad_token_id, tactic_ids[0]
         )
@@ -194,18 +194,18 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
     ##############
 
     def validation_step(self, batch: Dict[str, Any], _) -> None:
-        state_ids = batch["state_ids"]
-        state_mask = batch["state_mask"]
+        states_ids = batch["states_ids"]
+        states_mask = batch["states_mask"]
         tactic_ids = batch["tactic_ids"]
 
-        loss = self(state_ids, state_mask, tactic_ids)
+        loss = self(states_ids, states_mask, tactic_ids)
         self.log(f"loss_val", loss, on_step=False, on_epoch=True, sync_dist=True)
-        self._log_io_texts("val", state_ids, tactic_ids)
+        self._log_io_texts("val", states_ids, tactic_ids)
 
         # Generate topk tactic candidates via Beam Search.
         output = self.generator.generate(
-            input_ids=state_ids,
-            attention_mask=state_mask,
+            input_ids=states_ids,
+            attention_mask=states_mask,
             max_length=self.max_seq_len,
             num_beams=self.num_beams,
             do_sample=False,
@@ -213,7 +213,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             early_stopping=False,
         )
         output_text = self.tokenizer.batch_decode(output, skip_special_tokens=True)
-        batch_size = state_ids.size(0)
+        batch_size = states_ids.size(0)
         assert len(output_text) == batch_size * self.num_beams
         tactics_pred = [
             output_text[i * self.num_beams : (i + 1) * self.num_beams]
@@ -231,6 +231,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             self.log(f"top{k}_acc_val", topk_acc, on_step=False, on_epoch=True)
 
     def on_validation_epoch_end(self) -> None:
+        return
         ckpt_path = f"{self.trainer.log_dir}/checkpoints/last.ckpt"
         self.trainer.save_checkpoint(ckpt_path)
         logger.info(f"Saved checkpoint to {ckpt_path}")
@@ -308,20 +309,20 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
                 for s, premises in zip_strict(state, retrieved_premises)
             ]
 
-        tokenized_state = self.tokenizer(
+        tokenized_states = self.tokenizer(
             state,
             padding="longest",
             max_length=self.max_seq_len,
             truncation=True,
             return_tensors="pt",
         )
-        state_ids = tokenized_state.input_ids.to(self.device)
-        state_mask = tokenized_state.attention_mask.to(self.device)
+        states_ids = tokenized_states.input_ids.to(self.device)
+        states_mask = tokenized_states.attention_mask.to(self.device)
 
         # Generate tactic candidates using beam search.
         output = self.generator.generate(
-            input_ids=state_ids,
-            attention_mask=state_mask,
+            input_ids=states_ids,
+            attention_mask=states_mask,
             max_length=self.max_seq_len,
             num_beams=num_samples,
             length_penalty=self.length_penalty,

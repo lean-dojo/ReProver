@@ -60,7 +60,8 @@ class GeneratorDataset(Dataset):
                         "commit": thm["commit"],
                         "file_path": thm["file_path"],
                         "full_name": thm["full_name"],
-                        "state": format_state(tac["state_before"]),
+                        "state_before": format_state(tac["state_before"]),
+                        "state_after": format_state(tac["state_after"]),
                         "tactic": tactic,
                     }
                 )
@@ -90,14 +91,15 @@ class GeneratorDataset(Dataset):
             )
 
         if not self.keep_marks:
-            ex["state"] = remove_marks(ex["state"])
+            ex["state_before"] = remove_marks(ex["state_before"])
+            ex["state_after"] = remove_marks(ex["state_after"])
 
         return ex
 
     def collate(self, examples: List[Example]) -> Batch:
-        state = [ex["state"] for ex in examples]
-        tokenized_state = self.tokenizer(
-            state,
+        states = ["before\n" + ex["state_before"] + "\n\nafter\n" + ex["state_after"] for ex in examples]
+        tokenized_states = self.tokenizer(
+            states,
             padding="longest",
             max_length=self.max_seq_len,
             truncation=True,
@@ -115,9 +117,9 @@ class GeneratorDataset(Dataset):
         tactic_ids[tactic_ids == self.tokenizer.pad_token_id] = -100
 
         batch = {}
-        batch["state"] = state
-        batch["state_ids"] = tokenized_state.input_ids
-        batch["state_mask"] = tokenized_state.attention_mask
+        batch["states"] = states
+        batch["states_ids"] = tokenized_states.input_ids
+        batch["states_mask"] = tokenized_states.attention_mask
         batch["tactic"] = tactic
         batch["tactic_ids"] = tactic_ids
         batch["tactic_mask"] = tokenized_tactic.attention_mask
