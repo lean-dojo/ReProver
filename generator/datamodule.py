@@ -97,7 +97,10 @@ class GeneratorDataset(Dataset):
         return ex
 
     def collate(self, examples: List[Example]) -> Batch:
-        states = ["before\n" + ex["state_before"] + "\n\nafter\n" + ex["state_after"] for ex in examples]
+        states = [
+            "before\n" + ex["state_before"] + "\n\nafter\n" + ex["state_after"]
+            for ex in examples
+        ]
         tokenized_states = self.tokenizer(
             states,
             padding="longest",
