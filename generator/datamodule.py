@@ -21,6 +21,10 @@ from common import (
 )
 
 
+def _format_states_pair(state_before: str, state_after: str) -> str:
+    return "before\n" + state_before + "\n\nafter\n" + state_after
+
+
 class GeneratorDataset(Dataset):
     def __init__(
         self,
@@ -98,7 +102,7 @@ class GeneratorDataset(Dataset):
 
     def collate(self, examples: List[Example]) -> Batch:
         states = [
-            "before\n" + ex["state_before"] + "\n\nafter\n" + ex["state_after"]
+            _format_states_pair(ex["state_before"], ex["state_after"])
             for ex in examples
         ]
         tokenized_states = self.tokenizer(
