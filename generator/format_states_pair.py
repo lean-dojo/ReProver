@@ -1,10 +1,12 @@
 from typing import List, Optional
 from dataclasses import dataclass
 
+
 @dataclass(unsafe_hash=True)
 class Hyp:
     name: str
     type: str
+
 
 @dataclass(unsafe_hash=True)
 class Goal:
@@ -12,32 +14,34 @@ class Goal:
     name: Optional[str]
     type: str
 
+
 @dataclass(unsafe_hash=True)
 class State:
     goals: List[Goal]
+
 
 def parse_hyps(s: str) -> List[Hyp]:
     names, type = s.split(" : ")
     return [Hyp(name, type) for name in names.split()]
 
-def parse_goal(s : str) -> Goal:
+
+def parse_goal(s: str) -> Goal:
     lines = s.split("\n")
-    assert(len(lines) >= 1)
-    assert(lines[-1].startswith("⊢"))
+    assert len(lines) >= 1
+    assert lines[-1].startswith("⊢")
     goal_type = lines[-1]
     lines = lines[:-1]
     goal_name = None
     if len(lines) >= 1 and not ":" in lines[0]:
         goal_name = lines[0]
         lines = lines[1:]
-    return Goal(
-            [h for hs in lines for h in parse_hyps(hs)],
-            goal_name,
-            goal_type)
+    return Goal([h for hs in lines for h in parse_hyps(hs)], goal_name, goal_type)
+
 
 def parse_state(s: str) -> State:
     goals = s.split("\n\n")
     return State([parse_goal(g) for g in goals])
+
 
 def format_states_pair(state_before_str: str, state_after_str: str) -> List[str]:
     state_before = parse_state(state_before_str)
@@ -50,21 +54,26 @@ def format_states_pair(state_before_str: str, state_after_str: str) -> List[str]
     # can't establish a relationship which goal was created from where so we drop these
     # datapoints.
     if len(goals_before) != 1:
-        return [] 
-    from_goal = goals_before[0] 
+        return []
+    from_goal = goals_before[0]
     result = []
     if len(goals_after) == 0:
         result.append("goals accomplished")
     for to_goal in goals_after:
         new_hyps = [hyp for hyp in to_goal.hyps if not hyp in from_goal.hyps]
-        result.extend(["...\n{} : {}\n{}".format(hyp.name, hyp.type, to_goal.type)
-                           for hyp in new_hyps])
+        result.extend(
+            [
+                "...\n{} : {}\n{}".format(hyp.name, hyp.type, to_goal.type)
+                for hyp in new_hyps
+            ]
+        )
         if from_goal.type != to_goal.type:
             result.append("...\n{}".format(to_goal.type))
 
     hyps_before = "\n".join(["{} : {}".format(h.name, h.type) for h in from_goal.hyps])
     before = "before\n{}\n{}".format(hyps_before, from_goal.type)
     return ["{}\n\nafter\n{}".format(before, after) for after in result]
+
 
 def test(before: str, after: str):
     print("\n=========\n".join(format_states_pair(before, after)))
@@ -77,5 +86,7 @@ def test(before: str, after: str):
 #      "a b c : Nat\n⊢ c + (b + a) = c + b + a\n\n⊢ True")
 # test("a : 1\nb : 2 \nc : 3\n⊢ goalA",
 #      "a : 666\nb : 2 \nc : 3\nm : 777\n⊢ goalA")
-test("case inl\np : Prop\nh✝ : p\n⊢ True\n\ncase inr\np : Prop\nh✝ : p\n⊢ True",
-     "case inr\np : Prop\nh✝ : p\n⊢ True")
+test(
+    "case inl\np : Prop\nh✝ : p\n⊢ True\n\ncase inr\np : Prop\nh✝ : p\n⊢ True",
+    "case inr\np : Prop\nh✝ : p\n⊢ True",
+)
