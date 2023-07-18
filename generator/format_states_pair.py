@@ -79,14 +79,19 @@ def test(before: str, after: str):
     print("\n=========\n".join(format_states_pair(before, after)))
 
 
+# Testing examples
+#
 # test("⊢ p -> q", "h : p\n⊢ q")
-# test("q p : Prop\nhp : p\nhq : q\n⊢ p ∧ q",
-#      "q p : Prop\nhp : p\nhq : q\n⊢ p\n\nq p : Prop\nhp : p\nhq : q\n⊢ q")
-# test("a b c : Nat\n⊢ c + (a + b) = c + b + a\n\n⊢ True",
-#      "a b c : Nat\n⊢ c + (b + a) = c + b + a\n\n⊢ True")
-# test("a : 1\nb : 2 \nc : 3\n⊢ goalA",
-#      "a : 666\nb : 2 \nc : 3\nm : 777\n⊢ goalA")
-test(
-    "case inl\np : Prop\nh✝ : p\n⊢ True\n\ncase inr\np : Prop\nh✝ : p\n⊢ True",
-    "case inr\np : Prop\nh✝ : p\n⊢ True",
-)
+# test(
+#     "q p : Prop\nhp : p\nhq : q\n⊢ p ∧ q",
+#     "q p : Prop\nhp : p\nhq : q\n⊢ p\n\nq p : Prop\nhp : p\nhq : q\n⊢ q",
+# )
+# test(
+#     "a b c : Nat\n⊢ c + (a + b) = c + b + a\n\n⊢ True",
+#     "a b c : Nat\n⊢ c + (b + a) = c + b + a\n\n⊢ True",
+# )
+# test("a : 1\nb : 2 \nc : 3\n⊢ goalA", "a : 666\nb : 2 \nc : 3\nm : 777\n⊢ goalA")
+# test(
+#     "case inl\np : Prop\nh✝ : p\n⊢ True\n\ncase inr\np : Prop\nh✝ : p\n⊢ True",
+#     "case inr\np : Prop\nh✝ : p\n⊢ True",
+# )
