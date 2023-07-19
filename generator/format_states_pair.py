@@ -1,66 +1,9 @@
-from typing import List, Optional
-from dataclasses import dataclass, field
-import re
-
-_DECL_REGEX = re.compile(
-    r"(?<=\n)(?P<idents>.+?)\s+\:(?P<lean_type>.+?)\n(?=\S)", re.DOTALL
-)
-
-
-@dataclass(frozen=True)
-class Declaration:
-    ident: str
-    lean_type: str
-
-
-def _parse_local_context(goal_pp: str) -> List[Declaration]:
-    decls = []
-    for m in _DECL_REGEX.finditer("\n" + goal_pp):
-        lean_type = m["lean_type"].strip()
-        if lean_type.endswith(","):
-            lean_type = lean_type[:-1].strip()
-        for ident in m["idents"].strip().split():
-            decls.append(Declaration(ident.strip(), lean_type))
-    return decls
-
-
-@dataclass(frozen=True)
-class Goal:
-    assumptions: List[Declaration]
-    conclusion: str
-
-    @classmethod
-    def from_pp(cls, pp) -> "Goal":
-        _, concl = pp.split("⊢")
-        assumptions = _parse_local_context(pp)
-        return cls(assumptions, concl.strip())
-
-
-@dataclass(frozen=True)
-class TacticState:
-    pp: str
-    id: int = field(compare=False)
-    message: Optional[str] = field(default=None, compare=False)
-    goals: List[Goal] = field(init=False, compare=False, repr=False)
-
-    def __post_init__(self):
-        goals = [Goal.from_pp(_) for _ in self.pp.split("\n\n")]
-        assert len(goals) == self.pp.count("⊢")
-        object.__setattr__(self, "goals", goals)
-
-    @property
-    def num_goals(self) -> int:
-        return len(self.goals)
+from lean_dojo import TacticState
+from typing import List
 
 
 def format_states_pair(state_before_str: str, state_after_str: str) -> List[str]:
-    try:
-        state_before = TacticState(state_before_str, 19)
-    except Exception:
-        print(state_before_str)
-        import pdb
-
-        pdb.set_trace()
+    state_before = TacticState(state_before_str, 19)
     if state_after_str == "no goals":
         goals_before = state_before.goals
         goals_after = []
