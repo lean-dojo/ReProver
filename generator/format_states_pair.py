@@ -44,14 +44,22 @@ def parse_state(s: str) -> State:
 
 
 def format_states_pair(state_before_str: str, state_after_str: str) -> List[str]:
-    import pdb
+    try:
+        state_before = parse_state(state_before_str)
+    except Exception:
+        print(state_before_str)
+        import pdb
 
-    pdb.set_trace()
-    state_before = parse_state(state_before_str)
-    state_after = parse_state(state_after_str)
-    # Filter out unchanged goals
-    goals_before = [g for g in state_before.goals if not g in state_after.goals]
-    goals_after = [g for g in state_after.goals if not g in state_before.goals]
+        pdb.set_trace()
+    if state_after_str == "no goals":
+        goals_before = state_before.goals
+        goals_after = []
+    else:
+        state_after = parse_state(state_after_str)
+        # Filter out unchanged goals
+        goals_before = [g for g in state_before.goals if g not in state_after.goals]
+        goals_after = [g for g in state_after.goals if g not in state_before.goals]
+
     # We are going to assume that tactic always work on the first goal.
     # If it's not the case, e.g. it's a tactic combinator cracking up many goals we
     # can't establish a relationship which goal was created from where so we drop these
