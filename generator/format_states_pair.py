@@ -44,6 +44,9 @@ def parse_state(s: str) -> State:
 
 
 def format_states_pair(state_before_str: str, state_after_str: str) -> List[str]:
+    import pdb
+
+    pdb.set_trace()
     state_before = parse_state(state_before_str)
     state_after = parse_state(state_after_str)
     # Filter out unchanged goals

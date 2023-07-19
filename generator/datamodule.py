@@ -53,19 +53,24 @@ class GeneratorDataset(Dataset):
                     tactic = format_tactic(*tac["annotated_tactic"], normalize_tactics)
                 else:
                     tactic = format_tactic(tac["tactic"], [], normalize_tactics)
+                state_before = format_state(tac["state_before"])
+                state_after = format_state(tac["state_after"])
                 if not self.keep_marks:
                     tactic = remove_marks(tactic)
-                data.append(
-                    {
-                        "url": thm["url"],
-                        "commit": thm["commit"],
-                        "file_path": thm["file_path"],
-                        "full_name": thm["full_name"],
-                        "state_before": format_state(tac["state_before"]),
-                        "state_after": format_state(tac["state_after"]),
-                        "tactic": tactic,
-                    }
-                )
+                    state_before = remove_marks(state_before)
+                    state_after = remove_marks(state_after)
+
+                for states in format_states_pair(state_before, state_after):
+                    data.append(
+                        {
+                            "url": thm["url"],
+                            "commit": thm["commit"],
+                            "file_path": thm["file_path"],
+                            "full_name": thm["full_name"],
+                            "states": states,
+                            "tactic": tactic,
+                        }
+                    )
 
         logger.info(f"{len(data)} examples loaded")
         return data
@@ -91,18 +96,10 @@ class GeneratorDataset(Dataset):
                 self.p_drop if self.is_train else 0.0,
             )
 
-        if not self.keep_marks:
-            ex["state_before"] = remove_marks(ex["state_before"])
-            ex["state_after"] = remove_marks(ex["state_after"])
-
         return ex
 
     def collate(self, examples: List[Example]) -> Batch:
-        states = [
-            state
-            for ex in examples
-            for state in format_states_pair(ex["state_before"], ex["state_after"])
-        ]
+        states = [ex["states"] for ex in examples]
         tokenized_states = self.tokenizer(
             states,
             padding="longest",
