@@ -229,7 +229,7 @@ conda install --yes -c pytorch -c nvidia pytorch pytorch-cuda=11.7  # Use your o
 pip install tqdm loguru deepspeed pytorch-lightning[extra] transformers tensorboard openai rank_bm25 lean-dojo
 ```
 3. Prepend the repo's root to the `PYTHONPATH` environment variable.
-4. Make sure `wget` and `tar` are available. Then, run `python scripts/download_data.py` to download [LeanDojo Benchmark](https://zenodo.org/record/8016386) and [LeanDojo Benchmark 4](https://zenodo.org/record/8040110). They will be saved to `./data`. 
+4. Make sure `wget` and `tar` are available. Then, run `python scripts/download_data.py` to download [LeanDojo Benchmark](https://zenodo.org/record/8242196) and [LeanDojo Benchmark 4](https://zenodo.org/record/8242200). They will be saved to `./data`. 
 5. Use [LeanDojo](https://github.com/lean-dojo/LeanDojo) to trace all repos in the datasets: `python scripts/trace_repos.py`. This step may take some time. Please refer to [LeanDojo's documentation](https://leandojo.readthedocs.io/en/latest/) if you encounter any issues.
 
 
