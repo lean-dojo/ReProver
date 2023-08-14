@@ -6,14 +6,14 @@ from loguru import logger
 
 
 LEANDOJO_BENCHMARK_URL = (
-    "https://zenodo.org/record/8016386/files/leandojo_benchmark_v1.tar.gz"
+    "https://zenodo.org/record/8242196/files/leandojo_benchmark_v2.tar.gz"
 )
 LEANDOJO_BENCHMARK_4_URL = (
-    "https://zenodo.org/record/8040110/files/leandojo_benchmark_4_v1.tar.gz"
+    "https://zenodo.org/record/8242200/files/leandojo_benchmark_4_v2.tar.gz"
 )
 DOWNLOADS = {
-    LEANDOJO_BENCHMARK_URL: "8b8ec4899ce2ea5bbde9b9ba8b467b8c",
-    LEANDOJO_BENCHMARK_4_URL: "c68f78d645ae87495838227d2aeb5f4c",
+    LEANDOJO_BENCHMARK_URL: "a4fed5dec29bc8ac25f4a5a48edfa265",
+    LEANDOJO_BENCHMARK_4_URL: "908c56335f7c079721385e6d9c04cdf8",
 }
 
 
