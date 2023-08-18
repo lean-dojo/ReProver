@@ -1,5 +1,4 @@
 """Scripts for computing some simple statistics about the data."""
-import os
 import json
 import argparse
 import numpy as np
@@ -7,7 +6,7 @@ from tqdm import tqdm
 from pathlib import Path
 from loguru import logger
 from lean_dojo import Pos
-from lean_dojo.constants import LEAN3_DEPS_DIR
+from collections import defaultdict
 
 from common import Corpus
 
@@ -33,19 +32,18 @@ def main() -> None:
 
     tactics = []
     num_accessed_premises = []
+    num_theorems_by_topic = defaultdict(int)
 
     for data in (data_train, data_val, data_test):
         for ex in tqdm(data):
-            if ex["file_path"] in corpus:
-                file_path = ex["file_path"]
-            else:
-                _, repo_name = os.path.split(ex["url"])
-                file_path = os.path.join(LEAN3_DEPS_DIR, repo_name, ex["file_path"])
+            file_path = ex["file_path"]
+            topic = file_path.split("/")[1]
+            num_theorems_by_topic[topic] += 1
+
             premises = corpus.get_accessible_premises(file_path, Pos(*ex["start"]))
             num_accessed_premises.append(len(premises))
             for t in ex["traced_tactics"]:
                 tactics.append(t["annotated_tactic"][0])
-                # tactics.append(t["tactic"])
 
     logger.info(f"Number of tactics: {len(tactics)}")
 
@@ -60,6 +58,8 @@ def main() -> None:
     logger.info(
         f"Average number of accessed premises per theorem: {np.mean(num_accessed_premises)}"
     )
+
+    logger.info(f"Number of theorems by topic: {num_theorems_by_topic}")
 
 
 if __name__ == "__main__":

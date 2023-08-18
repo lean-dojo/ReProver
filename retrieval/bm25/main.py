@@ -15,7 +15,6 @@ from rank_bm25 import BM25Okapi
 from tokenizers import Tokenizer
 from typing import List, Dict, Any
 from ray.util.actor_pool import ActorPool
-from lean_dojo.constants import LEAN3_DEPS_DIR
 
 
 from common import Context, format_state, get_all_pos_premises
@@ -30,11 +29,7 @@ def _process_theorem(
     use_all_premises: bool,
 ) -> List[Dict[str, Any]]:
     preds = []
-    if thm["file_path"] in corpus:
-        file_path = thm["file_path"]
-    else:
-        _, repo_name = os.path.split(thm["url"])
-        file_path = os.path.join(LEAN3_DEPS_DIR, repo_name, thm["file_path"])
+    file_path = thm["file_path"]
 
     if use_all_premises:
         accessible_premise_idxs = list(range(len(corpus)))
@@ -111,9 +106,6 @@ def main() -> None:
         type=str,
         required=True,
     )
-    parser.add_argument(
-        "--corpus-path", type=str, default="data/leandojo_benchmark/corpus.jsonl"
-    )
     parser.add_argument("--num-retrieved", type=int, default=100)
     parser.add_argument("--use-all-premises", action="store_true")
     parser.add_argument("--num-cpus", type=int, default=32)
@@ -126,7 +118,7 @@ def main() -> None:
         )
 
     tokenizer = Tokenizer.from_file(args.tokenizer_path)
-    corpus = Corpus(args.corpus_path)
+    corpus = Corpus(os.path.join(args.data_path, "../corpus.jsonl"))
     premises = [premise.serialize() for premise in corpus.all_premises]
     tokenized_premises = [tokenizer.encode(p).tokens for p in premises]
     bm25 = BM25Okapi(tokenized_premises)
@@ -163,20 +155,17 @@ def main() -> None:
     else:
         preds = list(
             itertools.chain.from_iterable(
-                tqdm(
-                    [
-                        _process_theorem(
-                            thm,
-                            corpus,
-                            tokenizer,
-                            bm25,
-                            args.num_retrieved,
-                            args.use_all_premises,
-                        )
-                        for thm in theorems
-                    ],
-                    total=len(theorems),
-                )
+                [
+                    _process_theorem(
+                        thm,
+                        corpus,
+                        tokenizer,
+                        bm25,
+                        args.num_retrieved,
+                        args.use_all_premises,
+                    )
+                    for thm in tqdm(theorems)
+                ]
             )
         )
 

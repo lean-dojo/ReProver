@@ -7,7 +7,7 @@ Code for the paper:
 [LeanDojo: Theorem Proving with Retrieval-Augmented Language Models](https://leandojo.org/)      
 Under review, NeurIPS (Datasets and Benchmarks Track), 2023  
 [Kaiyu Yang](https://yangky11.github.io/), [Aidan Swope](https://aidanswope.com/about), [Alex Gu](https://minimario.github.io/), [Rahul Chalamala](https://rchalamala.github.io/),  
-[Peiyang Song](https://peiyang-song.github.io/), [Shixing Yu](https://billysx.github.io/), [Saad Godil](https://www.linkedin.com/in/saad-godil-9728353/), [Ryan Prenger](https://www.linkedin.com/in/ryan-prenger-18797ba1/), [Anima Anandkumar](http://tensorlab.cms.caltech.edu/users/anima/)
+[Peiyang Song](https://www.linkedin.com/in/peiyang-song-3279b3251/), [Shixing Yu](https://billysx.github.io/), [Saad Godil](https://www.linkedin.com/in/saad-godil-9728353/), [Ryan Prenger](https://www.linkedin.com/in/ryan-prenger-18797ba1/), [Anima Anandkumar](http://tensorlab.cms.caltech.edu/users/anima/)
 
 ```bibtex
 @article{yang2023leandojo,
@@ -38,6 +38,7 @@ Under review, NeurIPS (Datasets and Benchmarks Track), 2023
 | [kaiyuy/leandojo-lean3-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean3-tacgen-byt5-small) | ByT5 (encoder-decoder) | LeanDojo Benchmark (Lean 3) | Proof state | Tactic |
 | [kaiyuy/leandojo-lean3-retriever-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean3-retriever-byt5-small) | ByT5 (encoder-only) | LeanDojo Benchmark (Lean 3) | Proof state | Embedding |
 | [kaiyuy/leandojo-lean4-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean4-tacgen-byt5-small) | ByT5 (encoder-decoder)  | LeanDojo Benchmark 4 (Lean 4) | Proof state | Tactic |
+| [kaiyuy/leandojo-lean4-sst-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean4-sst-byt5-small) | ByT5 (encoder-decoder)  | LeanDojo Benchmark 4 (Lean 4) | Two proof states (before and after)  | Tactic |
 | [kaiyuy/leandojo-lean3-retriever-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean3-retriever-tacgen-byt5-small) | ByT5 (encoder-decoder) | LeanDojo Benchmark (Lean 3) | Retrieved premises + proof state | Tactic |
 
 Our trained models are available on HuggingFace Hub. With minimum dependencies (only [PyTorch](https://pytorch.org/) and [HuggingFace Transformers](https://huggingface.co/docs/transformers/index)), you can use our models to perform inference, finetune them on your own data, or plug them into your customized theorem proving pipeline. Below are some examples.
@@ -244,8 +245,10 @@ The config files for our experiments are in [./retrieval/confs](./retrieval/conf
 
 Run `python retrieval/main.py fit --help` to see how to use the training script. For example:
 ```bash
-python retrieval/main.py fit --config retrieval/confs/cli_random.yaml          # Train the retriever on the `random` split.
-python retrieval/main.py fit --config retrieval/confs/cli_novel_premises.yaml  # Train the retriever on the `novel_premises` split.
+python retrieval/main.py fit --config retrieval/confs/cli_lean3_random.yaml          # Train the retriever on the `random` split of LeanDojo Benchmark.
+python retrieval/main.py fit --config retrieval/confs/cli_lean3_novel_premises.yaml  # Train the retriever on the `novel_premises` split of LeanDojo Benchmark.
+python retrieval/main.py fit --config retrieval/confs/cli_lean4_random.yaml          # Train the retriever on the `random` split of LeanDojo Benchmark 4.
+python retrieval/main.py fit --config retrieval/confs/cli_lean4_novel_premises.yaml  # Train the retriever on the `novel_premises` split of LeanDojo Benchmark 4.
 ```
 The training script saves hyperparameters, model checkpoints, and other information to `./lightning_logs/EXP_ID/`, where `EXP_ID` is an arbitrary experiment ID that will be printed by the training script.
 
@@ -254,8 +257,10 @@ The training script saves hyperparameters, model checkpoints, and other informat
 
 After the models are trained, run the following commands to retrieve premises for all proof states in the dataset.
 ```bash
-python retrieval/main.py predict --config retrieval/confs/cli_random.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
-python retrieval/main.py predict --config retrieval/confs/cli_novel_premises.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
+python retrieval/main.py predict --config retrieval/confs/cli_lean3_random.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
+python retrieval/main.py predict --config retrieval/confs/cli_lean3_novel_premises.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
+python retrieval/main.py predict --config retrieval/confs/cli_lean4_random.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
+python retrieval/main.py predict --config retrieval/confs/cli_lean4_novel_premises.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
 ```
 Retrieved premises are saved to `./lightning_logs/EXP_ID'/predictions.pickle`.
 
@@ -266,6 +271,8 @@ After predictions are saved, evaluate them using metrics such as R@1, R@10, and 
 ```bash
 python retrieval/evaluate.py --data-path data/leandojo_benchmark/random --preds-file PATH_TO_PREDICTIONS_PICKLE
 python retrieval/evaluate.py --data-path data/leandojo_benchmark/novel_premises --preds-file PATH_TO_PREDICTIONS_PICKLE
+python retrieval/evaluate.py --data-path data/leandojo_benchmark_4/random --preds-file PATH_TO_PREDICTIONS_PICKLE
+python retrieval/evaluate.py --data-path data/leandojo_benchmark_4/novel_premises --preds-file PATH_TO_PREDICTIONS_PICKLE
 ```
 
 
@@ -278,15 +285,18 @@ Similar to premise selection, you can run `python generator/main.py --help` and 
 
 To train tactic generators without retrieval:
 ```bash
-python generator/main.py fit --config generator/confs/cli_random.yaml           # LeanDojo Benchmark, `random` split
-python generator/main.py fit --config generator/confs/cli_novel_premises.yaml   # LeanDojo Benchmark, `novel_premises` split
+python generator/main.py fit --config generator/confs/cli_lean3_random.yaml           # LeanDojo Benchmark, `random` split
+python generator/main.py fit --config generator/confs/cli_lean3_novel_premises.yaml   # LeanDojo Benchmark, `novel_premises` split
 python generator/main.py fit --config generator/confs/cli_lean4_random.yaml     # LeanDojo Benchmark 4, `random` split
+python generator/main.py fit --config generator/confs/cli_lean4_novel_premises.yaml     # LeanDojo Benchmark 4, `novel_premises` split
 ```
 
 To train models augmented by retrieval, we need to provide a retriever checkpoint and its predictions on all proof states in the dataset:
 ```bash 
-python generator/main.py fit --config generator/confs/cli_random.yaml --model.ret_ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --data.preds_path PATH_TO_PREDICTIONS_PICKLE
-python generator/main.py fit --config generator/confs/cli_novel_premises.yaml --model.ret_ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --data.preds_path PATH_TO_PREDICTIONS_PICKLE
+python generator/main.py fit --config generator/confs/cli_lean3_random.yaml --model.ret_ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --data.preds_path PATH_TO_PREDICTIONS_PICKLE
+python generator/main.py fit --config generator/confs/cli_lean3_novel_premises.yaml --model.ret_ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --data.preds_path PATH_TO_PREDICTIONS_PICKLE
+python generator/main.py fit --config generator/confs/cli_lean4_random.yaml --model.ret_ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --data.preds_path PATH_TO_PREDICTIONS_PICKLE
+python generator/main.py fit --config generator/confs/cli_lean4_novel_premises.yaml --model.ret_ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --data.preds_path PATH_TO_PREDICTIONS_PICKLE
 ```
 
 ### Evaluation on Theorem Proving

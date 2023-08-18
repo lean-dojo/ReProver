@@ -4,7 +4,7 @@ import math
 from enum import Enum
 from lean_dojo import (
     TacticState,
-    TacticError,
+    LeanError,
     TimeoutError,
     ProofGivenUp,
     ProofFinished,
@@ -51,7 +51,7 @@ class ProofFinishedNode(Node):
 
 @dataclass
 class ErrorNode(Node):
-    inner: Union[TacticError, TimeoutError, ProofGivenUp]
+    inner: Union[LeanError, TimeoutError, ProofGivenUp]
     status = Status.FAILED
     distance_to_proof = math.inf
     is_terminal = True

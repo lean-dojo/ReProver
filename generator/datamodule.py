@@ -6,7 +6,6 @@ from tqdm import tqdm
 from loguru import logger
 import pytorch_lightning as pl
 from typing import Optional, List, Dict, Any
-from lean_dojo.constants import LEAN3_DEPS_DIR
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer, ByT5Tokenizer
 
@@ -75,12 +74,7 @@ class GeneratorDataset(Dataset):
         ex = self.data[idx]
 
         if self.preds is not None:
-            if ex["file_path"] in self.corpus:
-                file_path = ex["file_path"]
-            else:
-                _, repo_name = os.path.split(ex["url"])
-                file_path = os.path.join(LEAN3_DEPS_DIR, repo_name, ex["file_path"])
-
+            file_path = ex["file_path"]
             pred = self.preds[(file_path, ex["full_name"], ex["state"])]
             ex["state"] = format_augmented_state(
                 ex["state"],

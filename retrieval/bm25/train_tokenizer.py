@@ -13,9 +13,6 @@ from retrieval.datamodule import RetrievalDataset
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train a BPE tokenizer")
     parser.add_argument("--vocab-size", type=int, default=30000)
-    parser.add_argument(
-        "--corpus-path", type=str, default="data/leandojo_benchmark/corpus.jsonl"
-    )
     parser.add_argument("--data-path", type=str, required=True)
     parser.add_argument("--output-path", type=str, required=True)
     args = parser.parse_args()
@@ -28,7 +25,7 @@ def main() -> None:
         special_tokens=["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"],
     )
 
-    corpus = Corpus(args.corpus_path)
+    corpus = Corpus(os.path.join(args.data_path, "../corpus.jsonl"))
     premises = [premise.serialize() for premise in corpus.all_premises]
 
     ds_train = RetrievalDataset(
