@@ -12,7 +12,7 @@ from lean_dojo.utils import execute
 from abc import ABC, abstractmethod
 from subprocess import CalledProcessError
 from typing import List, Dict, Any, Optional, Tuple
-from transformers import T5ForConditionalGeneration, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from common import (
     zip_strict,
@@ -113,7 +113,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             )
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.generator = T5ForConditionalGeneration.from_pretrained(model_name)
+        self.generator = AutoModelForCausalLM.from_pretrained(model_name)
 
         self.topk_accuracies = dict()
         for k in range(1, num_beams + 1):
@@ -129,15 +129,15 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
 
     def forward(
         self,
-        state_ids: torch.Tensor,
-        state_mask: torch.Tensor,
-        tactic_ids: torch.Tensor,
+        input_ids: torch.Tensor,
+        input_mask: torch.Tensor,
+        input_labels: torch.Tensor,
     ) -> torch.Tensor:
         return self.generator(
-            input_ids=state_ids,
-            attention_mask=state_mask,
-            labels=tactic_ids,
-        ).loss
+            input_ids=input_ids,
+            attention_mask=input_mask,
+            labels=input_labels,
+        )[0]
 
     ############
     # Training #
@@ -145,9 +145,9 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
 
     def training_step(self, batch, batch_idx: int):
         loss = self(
-            batch["state_ids"],
-            batch["state_mask"],
-            batch["tactic_ids"],
+            batch["input_ids"],
+            batch["input_mask"],
+            batch["input_labels"],
         )
         self.log(
             "loss_train",
@@ -197,8 +197,11 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         state_ids = batch["state_ids"]
         state_mask = batch["state_mask"]
         tactic_ids = batch["tactic_ids"]
+        input_ids = batch["input_ids"]
+        input_mask = batch["input_mask"]
+        input_labels = batch["input_labels"]
 
-        loss = self(state_ids, state_mask, tactic_ids)
+        loss = self(input_ids, input_mask, input_labels)
         self.log(f"loss_val", loss, on_step=False, on_epoch=True, sync_dist=True)
         self._log_io_texts("val", state_ids, tactic_ids)
 
@@ -304,7 +307,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
                 self.eval_num_retrieved,
             )
             state = [
-                format_augmented_state(s, premises, self.max_seq_len, p_drop=0.0)
+                format_augmented_state(s, premises, self.max_seq_len, p_drop=0.0) +  + "\u0002\u0002\u0002"
                 for s, premises in zip_strict(state, retrieved_premises)
             ]
 
@@ -352,133 +355,3 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             tactics_with_scores.append(list(zip_strict(output_text, output_score)))
 
         return tactics_with_scores
-
-
-class GPT4TacticGenerator(TacticGenerator):
-    def __init__(
-        self,
-        organization: str,
-        api_key: str,
-        model: str = "gpt-4",
-        max_tokens: int = 1024,
-        num_retries: int = 3,
-        threshold: float = 0.9,
-    ):
-        super().__init__()
-        openai.organization = organization
-        openai.api_key = api_key
-        self.model = model
-        self.default_prompt = "You are an expert in Lean3 theorem proofs. We are trying to solve the Lean3 theorem 'THEOREM_FULL_NAME' from the mathlib file 'FILE_PATH'. The current tactic state is: 'TACTIC_STATE'. Suggest exactly NUM_SAMPLES unique tactics to progress in solving 'THEOREM_FULL_NAME', along with their confidence levels as a float between 0 and 1. Rank them in order of effectiveness. Present the tactics and their confidence levels as comma-separated tuples in this format: #(tactic_{1}, confidence_{1})#, #(tactic_{2}, confidence_{2})#, ..., #(tactic_{NUM_SAMPLES}, confidence_{NUM_SAMPLES})#."
-        self.max_tokens = max_tokens
-        self.num_retries = num_retries
-        self.threshold = threshold
-
-    def generate(
-        self,
-        state: str,
-        file_path: str,
-        theorem_full_name: str,
-        theorem_pos: Pos,
-        num_samples: int,
-    ) -> List[Tuple[str, float]]:
-        prompt = (
-            self.default_prompt.replace("TACTIC_STATE", state)
-            .replace("FILE_PATH", file_path)
-            .replace("THEOREM_FULL_NAME", theorem_full_name)
-            .replace("NUM_SAMPLES", str(int(num_samples / self.threshold)))
-        )
-        logger.info(prompt)
-
-        for _ in range(self.num_retries):
-            response = None
-            # https://platform.openai.com/docs/guides/error-codes/python-library-error-types
-            try:
-                response = openai.ChatCompletion.create(
-                    model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    # temperature=0,
-                    max_tokens=self.max_tokens,
-                    # stop="E:" #
-                )
-            except openai.error.APIError as e:
-                # Handle API error here, e.g. retry or log
-                logger.info(f"OpenAI API returned an API Error: {e}")
-                continue
-            except openai.error.APIConnectionError as e:
-                # Handle connection error here
-                logger.info(f"Failed to connect to OpenAI API: {e}")
-                continue
-            except openai.error.RateLimitError as e:
-                # Handle rate limit error (we recommend using exponential backoff)
-                logger.info(f"OpenAI API request exceeded rate limit: {e}")
-                continue
-            except Exception as e:
-                logger.info(e)
-                continue
-
-            if response is None:
-                continue
-
-            logger.info(f"GPT-4 response: {response}")
-            output = response["choices"][0]["message"]["content"]
-            indices = []
-
-            for i, c in enumerate(output):
-                if c == "#":
-                    indices.append(i)
-
-            tactics_with_scores = []
-
-            for i in range(1, len(indices), 2):
-                tactic_and_confidence = output[indices[i - 1] + 1 : indices[i]].strip()
-
-                try:
-                    while tactic_and_confidence[0] == "(":
-                        tactic_and_confidence = tactic_and_confidence[1:]
-
-                    if tactic_and_confidence[-1] == ")":
-                        tactic_and_confidence = tactic_and_confidence[:-1]
-
-                    split_index = tactic_and_confidence.rindex(",")
-                    tactic = tactic_and_confidence[:split_index].strip()
-                    confidence = float(tactic_and_confidence[split_index + 1 :].strip())
-                except Exception as e:
-                    logger.info(e)
-                    logger.info(
-                        f"{self.model} output {output[indices[i-1]+1:indices[i]]} was not formatted correctly and could not be parsed."
-                    )
-                    continue
-
-                tactics_with_scores.append((tactic, confidence))
-
-            if len(tactics_with_scores) < int(self.threshold * num_samples):
-                continue
-
-            tactics_with_scores = sorted(
-                tactics_with_scores, key=lambda x: x[1], reverse=True
-            )[: min(num_samples, len(tactics_with_scores))]
-            logger.debug(f"GPT-4 tactics: {tactics_with_scores}")
-            logger.debug(
-                f"GPT-4 tactic count requested: {num_samples} / {self.threshold} = {int(num_samples / self.threshold)}"
-            )
-            logger.debug(
-                f"GPT-4 tactic count received and parsed: {len(tactics_with_scores)}"
-            )
-            return tactics_with_scores
-
-        raise ValueError("GPT-4 outputs are unparsable.")
-
-    def batch_generate(
-        self,
-        state: List[str],
-        file_path: List[str],
-        theorem_full_name: List[str],
-        theorem_pos: List[Pos],
-        num_samples: int,
-    ) -> List[List[Tuple[str, float]]]:
-        return [
-            self.generate(s, f, t, p, num_samples)
-            for s, f, t, p in zip_strict(
-                state, file_path, theorem_full_name, theorem_pos
-            )
-        ]

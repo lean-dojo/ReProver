@@ -8,7 +8,7 @@ import pytorch_lightning as pl
 from typing import Optional, List, Dict, Any
 from lean_dojo.constants import LEAN3_DEPS_DIR
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoTokenizer, ByT5Tokenizer
+from transformers import AutoTokenizer
 
 from common import (
     Batch,
@@ -31,7 +31,7 @@ class GeneratorDataset(Dataset):
         max_seq_len: int,
         p_drop: float,
         normalize_tactics: bool,
-        tokenizer: ByT5Tokenizer,
+        tokenizer: AutoTokenizer,
         is_train: bool,
     ) -> None:
         super().__init__()
@@ -91,6 +91,11 @@ class GeneratorDataset(Dataset):
 
         if not self.keep_marks:
             ex["state"] = remove_marks(ex["state"])
+        
+        ex["state"] = ex["state"] + "\u0002\u0002\u0002"
+
+        # $STATE$ = …. $TACTIC$ = ...
+        ex["input"] = ex["state"] + ex["tactic"]
 
         return ex
 
@@ -113,6 +118,14 @@ class GeneratorDataset(Dataset):
         )
         tactic_ids = tokenized_tactic.input_ids
         tactic_ids[tactic_ids == self.tokenizer.pad_token_id] = -100
+        inputs = [ex["input"] for ex in examples]
+        tokenized_input = self.tokenizer(
+            inputs,
+            padding="longest",
+            max_length=self.max_seq_len,
+            truncation=True,
+            return_tensors="pt",
+        )
 
         batch = {}
         batch["state"] = state
@@ -121,6 +134,10 @@ class GeneratorDataset(Dataset):
         batch["tactic"] = tactic
         batch["tactic_ids"] = tactic_ids
         batch["tactic_mask"] = tokenized_tactic.attention_mask
+        batch["input"] = inputs
+        batch["input_ids"] = tokenized_input.input_ids[:, :-1]
+        batch["input_mask"] = tokenized_input.attention_mask[:, :-1]
+        batch["input_labels"] = tokenized_input.input_ids[:, 1:].clone()
 
         # Copy other fields.
         for k in examples[0].keys():
