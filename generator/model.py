@@ -307,7 +307,8 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
                 self.eval_num_retrieved,
             )
             state = [
-                format_augmented_state(s, premises, self.max_seq_len, p_drop=0.0) +  + "\u0002\u0002\u0002"
+                format_augmented_state(s, premises, self.max_seq_len, p_drop=0.0)
+                + +"\u0002\u0002\u0002"
                 for s, premises in zip_strict(state, retrieved_premises)
             ]
 

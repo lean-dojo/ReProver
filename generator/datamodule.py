@@ -91,7 +91,7 @@ class GeneratorDataset(Dataset):
 
         if not self.keep_marks:
             ex["state"] = remove_marks(ex["state"])
-        
+
         ex["state"] = ex["state"] + "\u0002\u0002\u0002"
 
         # $STATE$ = …. $TACTIC$ = ...
