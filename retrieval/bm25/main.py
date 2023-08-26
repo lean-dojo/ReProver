@@ -72,17 +72,19 @@ def _process_theorem(
 class TheoremProcessor:
     def __init__(
         self,
-        corpus: Corpus,
-        tokenizer,
-        bm25,
+        tokenizer_path: str,
+        data_path: str,
         num_retrieved: int,
         use_all_premises: bool,
     ) -> None:
-        self.corpus = corpus
-        self.tokenizer = tokenizer
-        self.bm25 = bm25
         self.num_retrieved = num_retrieved
         self.use_all_premises = use_all_premises
+
+        self.tokenizer = Tokenizer.from_file(tokenizer_path)
+        self.corpus = Corpus(os.path.join(data_path, "../corpus.jsonl"))
+        premises = [premise.serialize() for premise in self.corpus.all_premises]
+        tokenized_premises = [self.tokenizer.encode(p).tokens for p in premises]
+        self.bm25 = BM25Okapi(tokenized_premises)
 
     def process_theorem(self, thm: Dict[str, Any]):
         return _process_theorem(
@@ -117,12 +119,6 @@ def main() -> None:
             f"Number of cpus requested ({args.num_cpus}) is greater than the number of cpus available ({multiprocessing.cpu_count()})"
         )
 
-    tokenizer = Tokenizer.from_file(args.tokenizer_path)
-    corpus = Corpus(os.path.join(args.data_path, "../corpus.jsonl"))
-    premises = [premise.serialize() for premise in corpus.all_premises]
-    tokenized_premises = [tokenizer.encode(p).tokens for p in premises]
-    bm25 = BM25Okapi(tokenized_premises)
-
     theorems = list(
         itertools.chain.from_iterable(
             json.load(open(os.path.join(args.data_path, f"{split}.json")))
@@ -131,13 +127,13 @@ def main() -> None:
     )
 
     if args.num_cpus > 1:
-        corpus = ray.put(corpus)
-        tokenizer = ray.put(tokenizer)
-        bm25 = ray.put(bm25)
         pool = ActorPool(
             [
                 TheoremProcessor.remote(
-                    corpus, tokenizer, bm25, args.num_retrieved, args.use_all_premises
+                    args.tokenizer_path,
+                    args.data_path,
+                    args.num_retrieved,
+                    args.use_all_premises,
                 )
                 for _ in range(args.num_cpus)
             ]
@@ -153,6 +149,12 @@ def main() -> None:
             )
         )
     else:
+        tokenizer = Tokenizer.from_file(args.tokenizer_path)
+        corpus = Corpus(os.path.join(args.data_path, "../corpus.jsonl"))
+        premises = [premise.serialize() for premise in corpus.all_premises]
+        tokenized_premises = [tokenizer.encode(p).tokens for p in premises]
+        bm25 = BM25Okapi(tokenized_premises)
+
         preds = list(
             itertools.chain.from_iterable(
                 [
