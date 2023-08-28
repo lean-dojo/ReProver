@@ -12,7 +12,7 @@ from lean_dojo import (
     Theorem,
     LeanGitRepo,
     TacticState,
-    TacticError,
+    LeanError,
     TimeoutError,
     ProofFinished,
     ProofGivenUp,
@@ -235,7 +235,7 @@ class BestFirstSearchProver:
             if isinstance(response, ProofFinished):
                 result_node = ProofFinishedNode(response)
             elif type(response) in (
-                TacticError,
+                LeanError,
                 TimeoutError,
                 ProofGivenUp,
             ):
@@ -279,7 +279,7 @@ class BestFirstSearchProver:
                 assert node not in self.priority_queue
                 assert self.root.status == Status.PROVED
             elif type(response) in (
-                TacticError,
+                LeanError,
                 TimeoutError,
                 ProofGivenUp,
             ):
