@@ -25,7 +25,7 @@ Under review, NeurIPS (Datasets and Benchmarks Track), 2023
 
   - [LeanDojo Website](https://leandojo.org/)
   - [Using Trained Models on Hugging Face](#using-trained-models-on-hugging-face)
-  - [Using the Model in Lean](#using-the-model-on-in-lean)
+  - [Using the Model in Lean](#using-the-model-in-lean)
   - [Requirements](#requirements)
   - [Premise Selection](#premise-selection)
   - [Theorem Proving](#theorem-proving)
