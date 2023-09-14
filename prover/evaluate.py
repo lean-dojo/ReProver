@@ -166,7 +166,10 @@ def main() -> None:
     logger.info(
         f"Evaluation done! {num_proved} theorems proved, {num_failed} theorems failed, {num_discarded} non-theorems discarded"
     )
-    logger.info(f"Pass@1: {num_proved / (num_proved + num_failed)}")
+    if num_proved + num_failed == 0 :
+        logger.info(f"Pass@1 : 0")
+    else :
+        logger.info(f"Pass@1: {num_proved / (num_proved + num_failed)}")
 
     # Save the results.
     if args.exp_id is not None:
