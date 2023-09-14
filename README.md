@@ -25,7 +25,7 @@ Under review, NeurIPS (Datasets and Benchmarks Track), 2023
 
   - [LeanDojo Website](https://leandojo.org/)
   - [Using Trained Models on Hugging Face](#using-trained-models-on-hugging-face)
-  - [Using the Model in Lean](#using-the-model-in-lean)
+  - [Using the Model Directly in Lean](#using-the-model-directly-in-lean)
   - [Requirements](#requirements)
   - [Premise Selection](#premise-selection)
   - [Theorem Proving](#theorem-proving)
@@ -219,7 +219,7 @@ induction n with n IH
 **The rest of this document describes our system for training and evaluating LLM-based provers.**
 
 
-## Using the Model in Lean
+## Using the Model Directly in Lean
 
 Check out [LeanInfer](https://github.com/lean-dojo/LeanInfer) if you want to run ReProver's tactic generator directly in Lean's VSCode workflow. 
 
