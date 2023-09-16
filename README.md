@@ -139,7 +139,7 @@ def retrieve(state: str, premises: List[str], k: int) -> List[str]:
     topk = scores.topk(k).indices.tolist()
     return [premises[i] for i in topk]
 
-for p in retrieve(state, premises, k=2):
+for p in retrieve(state, premises, k=3):
     print(p, end="\n\n")
 ```
 
@@ -149,6 +149,8 @@ def <a>nat.gcd</a> : nat → nat → nat
 | 0        y := y
 | (succ x) y := have y % succ x < succ x, from mod_lt _ $ succ_pos _,
                 gcd (y % succ x) (succ x)
+
+@[simp] theorem <a>nat.gcd_zero_left</a> (x : nat) : gcd 0 x = x
 
 @[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0
 ```
