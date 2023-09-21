@@ -25,7 +25,7 @@ Under review, NeurIPS (Datasets and Benchmarks Track), 2023
 
   - [LeanDojo Website](https://leandojo.org/)
   - [Using Trained Models on Hugging Face](#using-trained-models-on-hugging-face)
-  - [Using the Model in Lean](#using-the-model-in-lean)
+  - [Using the Model Directly in Lean](#using-the-model-directly-in-lean)
   - [Requirements](#requirements)
   - [Premise Selection](#premise-selection)
   - [Theorem Proving](#theorem-proving)
@@ -38,8 +38,9 @@ Under review, NeurIPS (Datasets and Benchmarks Track), 2023
 | ---------- | ------------------ | ------------- | ----- | ------ |
 | [kaiyuy/leandojo-lean3-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean3-tacgen-byt5-small) | ByT5 (encoder-decoder) | LeanDojo Benchmark (Lean 3) | Proof state | Tactic |
 | [kaiyuy/leandojo-lean3-retriever-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean3-retriever-byt5-small) | ByT5 (encoder-only) | LeanDojo Benchmark (Lean 3) | Proof state | Embedding |
-| [kaiyuy/leandojo-lean4-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean4-tacgen-byt5-small) | ByT5 (encoder-decoder)  | LeanDojo Benchmark 4 (Lean 4) | Proof state | Tactic |
 | [kaiyuy/leandojo-lean3-retriever-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean3-retriever-tacgen-byt5-small) | ByT5 (encoder-decoder) | LeanDojo Benchmark (Lean 3) | Retrieved premises + proof state | Tactic |
+| [kaiyuy/leandojo-lean4-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean4-tacgen-byt5-small) | ByT5 (encoder-decoder)  | LeanDojo Benchmark 4 (Lean 4) | Proof state | Tactic |
+| [kaiyuy/leandojo-lean4-retriever-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean4-retriever-byt5-small) | ByT5 (encoder-only) | LeanDojo Benchmark (Lean 4) | Proof state | Embedding |
 
 Our trained models are available on HuggingFace Hub. With minimum dependencies (only [PyTorch](https://pytorch.org/) and [HuggingFace Transformers](https://huggingface.co/docs/transformers/index)), you can use our models to perform inference, finetune them on your own data, or plug them into your customized theorem proving pipeline. Below are some examples.
 
@@ -138,7 +139,7 @@ def retrieve(state: str, premises: List[str], k: int) -> List[str]:
     topk = scores.topk(k).indices.tolist()
     return [premises[i] for i in topk]
 
-for p in retrieve(state, premises, k=2):
+for p in retrieve(state, premises, k=3):
     print(p, end="\n\n")
 ```
 
@@ -148,6 +149,8 @@ def <a>nat.gcd</a> : nat → nat → nat
 | 0        y := y
 | (succ x) y := have y % succ x < succ x, from mod_lt _ $ succ_pos _,
                 gcd (y % succ x) (succ x)
+
+@[simp] theorem <a>nat.gcd_zero_left</a> (x : nat) : gcd 0 x = x
 
 @[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0
 ```
@@ -219,7 +222,7 @@ induction n with n IH
 **The rest of this document describes our system for training and evaluating LLM-based provers.**
 
 
-## Using the Model in Lean
+## Using the Model Directly in Lean
 
 Check out [LeanInfer](https://github.com/lean-dojo/LeanInfer) if you want to run ReProver's tactic generator directly in Lean's VSCode workflow. 
 
