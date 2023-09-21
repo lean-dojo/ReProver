@@ -167,7 +167,7 @@ def main() -> None:
         f"Evaluation done! {num_proved} theorems proved, {num_failed} theorems failed, {num_discarded} non-theorems discarded"
     )
     if num_proved + num_failed == 0 :
-        logger.info(f"Pass@1 : 0")
+        logger.info("Pass@1 : NaN")
     else :
         logger.info(f"Pass@1: {num_proved / (num_proved + num_failed)}")
 

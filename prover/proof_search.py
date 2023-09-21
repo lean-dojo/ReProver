@@ -383,8 +383,7 @@ class DistributedProver:
 
         if with_gpus:
             logger.info(f"Launching {num_cpus} GPU workers.")
-            num_gpus = torch.cuda.device_count()
-            ray.init(num_cpus=num_cpus, num_gpus=num_gpus)
+            ray.init(num_cpus=num_cpus, num_gpus=num_cpus)
             provers = [
                 GpuProver.remote(
                     ckpt_path,
