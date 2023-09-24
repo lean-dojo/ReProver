@@ -87,7 +87,10 @@ def main() -> None:
         help="Path to the data extracted by LeanDojo (e.g., data/leandojo_benchmark/random).",
     )
     parser.add_argument(
-        "--split", type=str, choices=["train", "val", "test"], default="val",
+        "--split",
+        type=str,
+        choices=["train", "val", "test"],
+        default="val",
     )
     # `file_path`, `full_name`, `name_filter`, and `num_theorems` can be used to filter theorems.
     parser.add_argument("--file-path", type=str)
