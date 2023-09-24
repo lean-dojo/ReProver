@@ -87,10 +87,7 @@ def main() -> None:
         help="Path to the data extracted by LeanDojo (e.g., data/leandojo_benchmark/random).",
     )
     parser.add_argument(
-        "--split",
-        type=str,
-        choices=["train", "val", "test"],
-        default="val",
+        "--split", type=str, choices=["train", "val", "test"], default="val",
     )
     # `file_path`, `full_name`, `name_filter`, and `num_theorems` can be used to filter theorems.
     parser.add_argument("--file-path", type=str)
@@ -166,7 +163,10 @@ def main() -> None:
     logger.info(
         f"Evaluation done! {num_proved} theorems proved, {num_failed} theorems failed, {num_discarded} non-theorems discarded"
     )
-    logger.info(f"Pass@1: {num_proved / (num_proved + num_failed)}")
+    if num_proved + num_failed == 0:
+        logger.info("Pass@1 : NaN")
+    else:
+        logger.info(f"Pass@1: {num_proved / (num_proved + num_failed)}")
 
     # Save the results.
     if args.exp_id is not None:
