@@ -43,7 +43,7 @@ model:
   eval_num_theorems: 200
 
 data:
-  data_path: data/leandojo_benchmark_4/random/
+  data_path: data/leandojo_benchmark_4/novel_premises/
   corpus_path: data/leandojo_benchmark_4/corpus.jsonl
   keep_marks: true
   preds_path: null

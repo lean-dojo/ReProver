@@ -482,3 +482,32 @@ class GPT4TacticGenerator(TacticGenerator):
                 state, file_path, theorem_full_name, theorem_pos
             )
         ]
+
+
+class FixedTacticGenerator(TacticGenerator):
+    def __init__(self, tactic, module) -> None:
+        self.tactic = tactic
+        self.module = module
+
+    def generate(
+        self,
+        state: str,
+        file_path: str,
+        theorem_full_name: str,
+        theorem_pos: Pos,
+        num_samples: int,
+    ) -> List[Tuple[str, float]]:
+        return [(f"{{ {self.tactic} }}", 1.0)]
+
+    def batch_generate(
+        self,
+        state: List[str],
+        file_path: List[str],
+        theorem_full_name: List[str],
+        theorem_pos: List[Pos],
+        num_samples: int,
+    ) -> List[List[Tuple[str, float]]]:
+        return [
+            self.generate(s, f, tfn, tp, num_samples)
+            for s, f, tfn, tp in zip(state, file_path, theorem_full_name, theorem_pos)
+        ]

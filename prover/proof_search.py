@@ -28,7 +28,7 @@ from lean_dojo.constants import LEAN3_DEPS_DIR, LEAN4_DEPS_DIR
 
 from common import zip_strict
 from prover.search_tree import *
-from generator.model import RetrievalAugmentedGenerator
+from generator.model import RetrievalAugmentedGenerator, FixedTacticGenerator
 
 
 @dataclass(frozen=True)
@@ -80,8 +80,16 @@ class BestFirstSearchProver:
         self.environment_time = 0.0
         self.num_expansions = 0
 
+        if isinstance(self.tac_gen, FixedTacticGenerator):
+            imps = [self.tac_gen.module]
+        else:
+            imps = []
+
         try:
-            with Dojo(thm, hard_timeout=60 + self.timeout) as (dojo, init_state):
+            with Dojo(thm, hard_timeout=60 + self.timeout, additional_imports=imps) as (
+                dojo,
+                init_state,
+            ):
                 self.dojo = dojo
                 self.root = InternalNode(
                     state=init_state,
@@ -302,19 +310,24 @@ class CpuProver(BestFirstSearchProver):
 
     def __init__(
         self,
-        ckpt_path: str,
+        ckpt_path: Optional[str],
         indexed_corpus_path: Optional[str],
+        tactic: Optional[str],
+        module: Optional[str],
         timeout: int,
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
-        tac_gen = RetrievalAugmentedGenerator.load(
-            ckpt_path, device=torch.device("cpu"), freeze=True
-        )
-        if tac_gen.retriever is not None:
-            if indexed_corpus_path is not None:
-                tac_gen.retriever.load_corpus(indexed_corpus_path)
-            tac_gen.retriever.reindex_corpus(batch_size=32)
+        if ckpt_path is None:
+            tac_gen = FixedTacticGenerator(tactic, module)
+        else:
+            tac_gen = RetrievalAugmentedGenerator.load(
+                ckpt_path, device=torch.device("cpu"), freeze=True
+            )
+            if tac_gen.retriever is not None:
+                if indexed_corpus_path is not None:
+                    tac_gen.retriever.load_corpus(indexed_corpus_path)
+                tac_gen.retriever.reindex_corpus(batch_size=32)
         super().__init__(
             tac_gen,
             timeout,
@@ -329,19 +342,24 @@ class GpuProver(BestFirstSearchProver):
 
     def __init__(
         self,
-        ckpt_path: str,
+        ckpt_path: Optional[str],
         indexed_corpus_path: Optional[str],
+        tactic: Optional[str],
+        module: Optional[str],
         timeout: int,
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
-        tac_gen = RetrievalAugmentedGenerator.load(
-            ckpt_path, device=torch.device("cuda"), freeze=True
-        )
-        if tac_gen.retriever is not None:
-            if indexed_corpus_path is not None:
-                tac_gen.retriever.load_corpus(indexed_corpus_path)
-            tac_gen.retriever.reindex_corpus(batch_size=32)
+        if ckpt_path is None:
+            tac_gen = FixedTacticGenerator(tactic, module)
+        else:
+            tac_gen = RetrievalAugmentedGenerator.load(
+                ckpt_path, device=torch.device("cuda"), freeze=True
+            )
+            if tac_gen.retriever is not None:
+                if indexed_corpus_path is not None:
+                    tac_gen.retriever.load_corpus(indexed_corpus_path)
+                tac_gen.retriever.reindex_corpus(batch_size=32)
         super().__init__(
             tac_gen,
             timeout,
@@ -359,35 +377,47 @@ class DistributedProver:
 
     def __init__(
         self,
-        ckpt_path: str,
+        ckpt_path: Optional[str],
         indexed_corpus_path: Optional[str],
+        tactic: Optional[str],
+        module: Optional[str],
         num_cpus: int,
         with_gpus: bool,
         timeout: int,
         num_sampled_tactics: int,
         debug: Optional[bool] = False,
     ) -> None:
+        if ckpt_path is None:
+            assert tactic and not indexed_corpus_path
+        else:
+            assert not tactic and not module
         self.distributed = num_cpus > 1
+
         if not self.distributed:
-            device = torch.device("cuda") if with_gpus else torch.device("cpu")
-            tac_gen = RetrievalAugmentedGenerator.load(
-                ckpt_path, device=device, freeze=True
-            )
-            if tac_gen.retriever is not None:
-                assert indexed_corpus_path is not None
-                tac_gen.retriever.load_corpus(indexed_corpus_path)
+            if ckpt_path is None:
+                tac_gen = FixedTacticGenerator(tactic, module)
+            else:
+                device = torch.device("cuda") if with_gpus else torch.device("cpu")
+                tac_gen = RetrievalAugmentedGenerator.load(
+                    ckpt_path, device=device, freeze=True
+                )
+                if tac_gen.retriever is not None:
+                    assert indexed_corpus_path is not None
+                    tac_gen.retriever.load_corpus(indexed_corpus_path)
             self.prover = BestFirstSearchProver(
                 tac_gen, timeout, num_sampled_tactics, debug
             )
             return
 
+        ray.init()
         if with_gpus:
             logger.info(f"Launching {num_cpus} GPU workers.")
-            ray.init(num_cpus=num_cpus, num_gpus=num_cpus)
             provers = [
                 GpuProver.remote(
                     ckpt_path,
                     indexed_corpus_path,
+                    tactic,
+                    module,
                     timeout=timeout,
                     num_sampled_tactics=num_sampled_tactics,
                     debug=debug,
@@ -396,11 +426,12 @@ class DistributedProver:
             ]
         else:
             logger.info(f"Launching {num_cpus} CPU workers.")
-            ray.init(num_cpus=num_cpus, num_gpus=0)
             provers = [
                 CpuProver.remote(
                     ckpt_path,
                     indexed_corpus_path,
+                    tactic,
+                    module,
                     timeout=timeout,
                     num_sampled_tactics=num_sampled_tactics,
                     debug=debug,

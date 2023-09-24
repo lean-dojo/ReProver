@@ -97,7 +97,6 @@ def main() -> None:
     parser.add_argument(
         "--ckpt_path",
         type=str,
-        required=True,
         help="Checkpoint of the tactic generator.",
     )
     parser.add_argument(
@@ -105,6 +104,8 @@ def main() -> None:
         type=str,
         help="Path to a pickled indexed corpus. Not required for models w/o retrieval.",
     )
+    parser.add_argument("--tactic", type=str, help="The tactic to evaluate.")
+    parser.add_argument("--module", type=str, help="The module to import the tactic.")
     parser.add_argument(
         "--num-sampled-tactics",
         type=int,
@@ -128,6 +129,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    assert args.ckpt_path or args.tactic
+
     # Randomly generate an experiment ID if not provided.
     if args.exp_id is None:
         args.exp_id = str(uuid.uuid4())
@@ -142,6 +145,8 @@ def main() -> None:
     prover = DistributedProver(
         args.ckpt_path,
         args.indexed_corpus_path,
+        args.tactic,
+        args.module,
         num_cpus=args.num_cpus,
         with_gpus=args.with_gpus,
         timeout=args.timeout,

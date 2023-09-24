@@ -13,7 +13,6 @@ from lean_dojo import LeanGitRepo
 from typing import Optional, List
 from transformers import AutoTokenizer
 from torch.utils.data import Dataset, DataLoader
-from lean_dojo.constants import LEAN3_DEPS_DIR, LEAN4_DEPS_DIR
 
 
 from common import Context, Corpus, Batch, Example, format_state, get_all_pos_premises
@@ -39,23 +38,15 @@ class RetrievalDataset(Dataset):
         self.tokenizer = tokenizer
         self.is_train = is_train
         self.data = list(
-            itertools.chain.from_iterable(
-                self._load_data(path, uses_lean4) for path in data_paths
-            )
+            itertools.chain.from_iterable(self._load_data(path) for path in data_paths)
         )
 
-    def _load_data(self, data_path: str, uses_lean4: bool) -> List[Example]:
+    def _load_data(self, data_path: str) -> List[Example]:
         data = []
         logger.info(f"Loading data from {data_path}")
 
         for thm in tqdm(json.load(open(data_path))):
-            if thm["file_path"] in self.corpus:
-                file_path = thm["file_path"]
-            else:
-                # The theorem is from a dependency.
-                _, repo_name = os.path.split(thm["url"])
-                deps_dir = LEAN4_DEPS_DIR if uses_lean4 else LEAN3_DEPS_DIR
-                file_path = os.path.join(deps_dir, repo_name, thm["file_path"])
+            file_path = thm["file_path"]
 
             for i, tac in enumerate(thm["traced_tactics"]):
                 state = format_state(tac["state_before"])
@@ -111,14 +102,19 @@ class RetrievalDataset(Dataset):
         premises_in_file = []
         premises_outside_file = []
 
-        for p in self.corpus.get_premises(ex["context"].path):
-            if p == ex["pos_premise"]:
-                continue
-            if p.end < ex["context"].theorem_pos:
-                if ex["pos_premise"].path == ex["context"].path:
-                    premises_in_file.append(p)
-                else:
-                    premises_outside_file.append(p)
+        try:
+            for p in self.corpus.get_premises(ex["context"].path):
+                if p == ex["pos_premise"]:
+                    continue
+                if p.end < ex["context"].theorem_pos:
+                    if ex["pos_premise"].path == ex["context"].path:
+                        premises_in_file.append(p)
+                    else:
+                        premises_outside_file.append(p)
+        except Exception:
+            import pdb
+
+            pdb.set_trace()
 
         for p in self.corpus.transitive_dep_graph.successors(ex["context"].path):
             if p == ex["pos_premise"].path:
