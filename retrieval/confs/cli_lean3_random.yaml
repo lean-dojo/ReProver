@@ -25,13 +25,13 @@ trainer:
     - class_path: pytorch_lightning.callbacks.EarlyStopping
       init_args:
         monitor: Recall@10_val
-        patience: 3
+        patience: 5
         mode: max
         verbose: true
 
 model:
   model_name: google/byt5-small
-  lr: 1e-4
+  lr: 2e-4
   warmup_steps: 2000
   num_retrieved: 100
 
@@ -40,7 +40,7 @@ data:
   corpus_path: data/leandojo_benchmark/corpus.jsonl
   num_negatives: 3
   num_in_file_negatives: 1
-  batch_size: 8
+  batch_size: 12
   eval_batch_size: 128
   max_seq_len: 1024
   num_workers: 4

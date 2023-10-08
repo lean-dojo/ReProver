@@ -307,7 +307,7 @@ python generator/main.py fit --config generator/confs/cli_lean4_random.yaml --mo
 python generator/main.py fit --config generator/confs/cli_lean4_novel_premises.yaml --model.ret_ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --data.preds_path PATH_TO_PREDICTIONS_PICKLE
 ```
 
-### Evaluation on Theorem Proving
+### Theorem Proving Evaluation on LeanDojo Benchmark (Lean 3 and Lean 4)
 
 After the tactic generator is trained, we combine it with best-first search to prove theorems by interacting with Lean.
 
@@ -331,6 +331,7 @@ python prover/evaluate.py --data-path data/leandojo_benchmark/random/  --ckpt_pa
 python prover/evaluate.py --data-path data/leandojo_benchmark/novel_premises/  --ckpt_path PATH_TO_REPROVER_CHECKPOINT --indexed-corpus-path PATH_TO_INDEXED_CORPUS --split test --num-cpus 8 --with-gpus
 ```
 
+See [here](docs/eval_MiniF2F_ProofNet.md) if you want to evaluate on other Lean repos such as [miniF2F](https://github.com/facebookresearch/miniF2F) and [ProofNet](https://github.com/zhangir-azerbayev/ProofNet).
 
 ## Questions and Bugs
 

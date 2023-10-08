@@ -156,10 +156,12 @@ class File:
         path = file_data["path"]
         premises = []
         for p in file_data["premises"]:
-            if "user__.n" in p["full_name"] or p["code"] == "":
+            full_name = p["full_name"]
+            if full_name is None:
+                continue
+            if "user__.n" in full_name or p["code"] == "":
                 # Ignore ill-formed premises (often due to errors in ASTs).
                 continue
-            full_name = p["full_name"]
             if full_name.startswith("[") and full_name.endswith("]"):
                 # Ignore mutual definitions.
                 continue
@@ -346,6 +348,8 @@ def get_all_pos_premises(annot_tac, corpus: Corpus) -> List[Premise]:
         p = corpus.locate_premise(def_path, Pos(*prov["def_pos"]))
         if p is not None:
             all_pos_premises.add(p)
+        else:
+            logger.warning(f"Cannot locate premise: {prov}")
 
     return list(all_pos_premises)
 

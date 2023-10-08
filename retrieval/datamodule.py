@@ -102,19 +102,14 @@ class RetrievalDataset(Dataset):
         premises_in_file = []
         premises_outside_file = []
 
-        try:
-            for p in self.corpus.get_premises(ex["context"].path):
-                if p == ex["pos_premise"]:
-                    continue
-                if p.end < ex["context"].theorem_pos:
-                    if ex["pos_premise"].path == ex["context"].path:
-                        premises_in_file.append(p)
-                    else:
-                        premises_outside_file.append(p)
-        except Exception:
-            import pdb
-
-            pdb.set_trace()
+        for p in self.corpus.get_premises(ex["context"].path):
+            if p == ex["pos_premise"]:
+                continue
+            if p.end < ex["context"].theorem_pos:
+                if ex["pos_premise"].path == ex["context"].path:
+                    premises_in_file.append(p)
+                else:
+                    premises_outside_file.append(p)
 
         for p in self.corpus.transitive_dep_graph.successors(ex["context"].path):
             if p == ex["pos_premise"].path:
