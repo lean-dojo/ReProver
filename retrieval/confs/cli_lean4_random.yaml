@@ -42,5 +42,5 @@ data:
   num_in_file_negatives: 1
   batch_size: 12
   eval_batch_size: 128
-  max_seq_len: 1024
+  max_seq_len: 2048
   num_workers: 4
