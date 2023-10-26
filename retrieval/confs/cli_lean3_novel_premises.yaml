@@ -25,7 +25,7 @@ trainer:
     - class_path: pytorch_lightning.callbacks.EarlyStopping
       init_args:
         monitor: Recall@10_val
-        patience: 3
+        patience: 5
         mode: max
         verbose: true
 
@@ -41,6 +41,6 @@ data:
   num_negatives: 3
   num_in_file_negatives: 1
   batch_size: 8
-  eval_batch_size: 128
-  max_seq_len: 2048
+  eval_batch_size: 64
+  max_seq_len: 1024
   num_workers: 4
