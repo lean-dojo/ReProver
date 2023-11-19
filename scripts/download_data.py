@@ -6,7 +6,7 @@ from loguru import logger
 
 
 LEANDOJO_BENCHMARK_URL = (
-    "https://zenodo.org/records/10044546/leandojo_benchmark_v3.tar.gz"
+    "https://zenodo.org/records/10114157/files/leandojo_benchmark_v5.tar.gz?download=1"
 )
 LEANDOJO_BENCHMARK_4_URL = (
     "https://zenodo.org/records/10044516/files/leandojo_benchmark_4_v3.tar.gz"
