@@ -6,13 +6,13 @@ from loguru import logger
 
 
 LEANDOJO_BENCHMARK_URL = (
-    "https://zenodo.org/records/10114157/files/leandojo_benchmark_v5.tar.gz?download=1"
+    "https://zenodo.org/records/10114157/files/leandojo_benchmark_v5.tar.gz"
 )
 LEANDOJO_BENCHMARK_4_URL = (
     "https://zenodo.org/records/10044516/files/leandojo_benchmark_4_v3.tar.gz"
 )
 DOWNLOADS = {
-    LEANDOJO_BENCHMARK_URL: "a4fed5dec29bc8ac25f4a5a48edfa265",
+    LEANDOJO_BENCHMARK_URL: "4b256200618d4668b12a9cfe8c4df4d3",
     LEANDOJO_BENCHMARK_4_URL: "908c56335f7c079721385e6d9c04cdf8",
 }
 
