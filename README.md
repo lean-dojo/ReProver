@@ -234,7 +234,7 @@ Check out [LeanInfer](https://github.com/lean-dojo/LeanInfer) if you want to run
 ```bash
 conda create --yes --name ReProver python=3.10 ipython numpy
 conda activate ReProver
-conda install --yes -c pytorch -c nvidia pytorch pytorch-cuda=11.8  # Depending on your CUDA version
+conda install --yes -c pytorch -c nvidia pytorch pytorch-cuda=11.7  # Depending on your CUDA version
 pip install tqdm loguru deepspeed pytorch-lightning[extra] transformers tensorboard openai rank_bm25 lean-dojo
 ```
 3. Prepend the repo's root to the `PYTHONPATH` environment variable.
