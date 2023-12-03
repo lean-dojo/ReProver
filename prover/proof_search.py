@@ -24,7 +24,6 @@ from loguru import logger
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 from ray.util.actor_pool import ActorPool
-from lean_dojo.constants import LEAN3_DEPS_DIR, LEAN4_DEPS_DIR
 
 from common import zip_strict
 from prover.search_tree import *
@@ -207,13 +206,7 @@ class BestFirstSearchProver:
         path = str(self.theorem.file_path)
 
         if self.theorem.repo != self.repo:
-            if self.theorem.repo.uses_lean3:
-                path = os.path.join(LEAN3_DEPS_DIR, self.theorem.repo.name, path)
-            elif self.theorem.repo.is_lean:
-                raise NotImplementedError
-                path = os.path.join(LEAN4_DEPS_DIR, "lean4", path)
-            else:
-                path = os.path.join(LEAN4_DEPS_DIR, self.theorem.repo.name, path)
+            path = self.theorem.repo.get_packages_dir() / self.theorem.repo.name / path
 
         suggestions = self.tac_gen.generate(
             state=ts,

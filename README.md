@@ -234,7 +234,8 @@ Check out [LeanInfer](https://github.com/lean-dojo/LeanInfer) if you want to run
 ```bash
 conda create --yes --name ReProver python=3.10 ipython numpy
 conda activate ReProver
-conda install --yes -c pytorch -c nvidia pytorch pytorch-cuda=11.7  # Use your own CUDA version.
+pip install torch --index-url https://download.pytorch.o
+rg/whl/cu117  # Depending on your CUDA version, see https://pytorch.org/.
 pip install tqdm loguru deepspeed pytorch-lightning[extra] transformers tensorboard openai rank_bm25 lean-dojo
 ```
 3. Prepend the repo's root to the `PYTHONPATH` environment variable.
@@ -264,7 +265,7 @@ The training script saves hyperparameters, model checkpoints, and other informat
 
 ### Retrieving Premises for All Proof States
 
-After the models are trained, run the following commands to retrieve premises for all proof states in the dataset.
+After the models are trained, run thcd v
 ```bash
 python retrieval/main.py predict --config retrieval/confs/cli_lean3_random.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
 python retrieval/main.py predict --config retrieval/confs/cli_lean3_novel_premises.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
@@ -314,22 +315,24 @@ After the tactic generator is trained, we combine it with best-first search to p
 
 For models without retrieval, run:
 ```bash
-python prover/evaluate.py --data-path data/leandojo_benchmark/random/  --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-cpus 8 --with-gpus
-python prover/evaluate.py --data-path data/leandojo_benchmark/novel_premises/  --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-cpus 8 --with-gpus
-python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/  --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-cpus 8 --with-gpus
-python prover/evaluate.py --data-path data/leandojo_benchmark_4/novel_premises/  --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-cpus 8 --with-gpus
+python prover/evaluate.py --data-path data/leandojo_benchmark/random/ --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-cpus 8 --with-gpus
+python prover/evaluate.py --data-path data/leandojo_benchmark/novel_premises/ --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-cpus 8 --with-gpus
+python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/ --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-cpus 8 --with-gpus
+python prover/evaluate.py --data-path data/leandojo_benchmark_4/novel_premises/ --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-cpus 8 --with-gpus
 ```
 
 For models with retrieval, first use the retriever to index the corpus (pre-computing the embeddings of all premises):
 ```bash
 python retrieval/index.py --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --corpus-path data/leandojo_benchmark/corpus.jsonl --output-path PATH_TO_INDEXED_CORPUS
+python retrieval/index.py --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --corpus-path data/leandojo_benchmark_4/corpus.jsonl --output-path PATH_TO_INDEXED_CORPUS
 # Do it separately for two data splits.
 ```
 
 Then, run:
 ```bash
 python prover/evaluate.py --data-path data/leandojo_benchmark/random/  --ckpt_path PATH_TO_REPROVER_CHECKPOINT --indexed-corpus-path PATH_TO_INDEXED_CORPUS --split test --num-cpus 8 --with-gpus
-python prover/evaluate.py --data-path data/leandojo_benchmark/novel_premises/  --ckpt_path PATH_TO_REPROVER_CHECKPOINT --indexed-corpus-path PATH_TO_INDEXED_CORPUS --split test --num-cpus 8 --with-gpus
+python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/  --ckpt_path PATH_TO_REPROVER_CHECKPOINT --indexed-corpus-path PATH_TO_INDEXED_CORPUS --split test --num-cpus 8 --with-gpus
+# Do it separately two data splits.
 ```
 
 See [here](docs/eval_MiniF2F_ProofNet.md) if you want to evaluate on other Lean repos such as [miniF2F](https://github.com/facebookresearch/miniF2F) and [ProofNet](https://github.com/zhangir-azerbayev/ProofNet).
