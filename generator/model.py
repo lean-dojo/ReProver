@@ -84,7 +84,8 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         eval_num_retrieved: int,
         eval_num_cpus: int,
         eval_num_theorems: int,
-        max_seq_len: int,
+        max_inp_seq_len: int,
+        max_oup_seq_len: int,
         length_penalty: float = 0.0,
         ret_ckpt_path: Optional[str] = None,
     ) -> None:
@@ -97,7 +98,8 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         self.eval_num_retrieved = eval_num_retrieved
         self.eval_num_cpus = eval_num_cpus
         self.eval_num_theorems = eval_num_theorems
-        self.max_seq_len = max_seq_len
+        self.max_inp_seq_len = max_inp_seq_len
+        self.max_oup_seq_len = max_oup_seq_len
 
         if ret_ckpt_path is None:
             logger.info("Without retrieval")
@@ -202,7 +204,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         output = self.generator.generate(
             input_ids=state_ids,
             attention_mask=state_mask,
-            max_length=256,
+            max_length=self.max_oup_seq_len,
             num_beams=self.num_beams,
             do_sample=False,
             num_return_sequences=self.num_beams,
@@ -308,14 +310,14 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
                 self.eval_num_retrieved,
             )
             state = [
-                format_augmented_state(s, premises, self.max_seq_len, p_drop=0.0)
+                format_augmented_state(s, premises, self.max_inp_seq_len, p_drop=0.0)
                 for s, premises in zip_strict(state, retrieved_premises)
             ]
 
         tokenized_state = self.tokenizer(
             state,
             padding="longest",
-            max_length=self.max_seq_len,
+            max_length=self.max_inp_seq_len,
             truncation=True,
             return_tensors="pt",
         )
@@ -326,7 +328,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         output = self.generator.generate(
             input_ids=state_ids,
             attention_mask=state_mask,
-            max_length=256,
+            max_length=self.max_oup_seq_len,
             num_beams=num_samples,
             length_penalty=self.length_penalty,
             do_sample=False,
