@@ -238,8 +238,8 @@ pip install torch --index-url https://download.pytorch.org/whl/cu117  # Dependin
 pip install tqdm loguru deepspeed pytorch-lightning[extra] transformers tensorboard openai rank_bm25 lean-dojo
 ```
 3. Prepend the repo's root to the `PYTHONPATH` environment variable.
-4. Set the environment variable `CONTAINER` to `docker` if you'll be using Lean 3 (not required for Lean 4. See [here](https://leandojo.readthedocs.io/en/latest/user-guide.html#running-within-docker-important-for-lean-3) for details). 
-5. Make sure `wget` and `tar` are available. Then, run `python scripts/download_data.py` to download [LeanDojo Benchmark](https://zenodo.org/doi/10.5281/zenodo.8016385) and [LeanDojo Benchmark 4](https://zenodo.org/doi/10.5281/zenodo.8040109). They will be saved to `./data`. 
+4. Make sure `wget` and `tar` are available. Then, run `python scripts/download_data.py` to download [LeanDojo Benchmark](https://zenodo.org/doi/10.5281/zenodo.8016385) and [LeanDojo Benchmark 4](https://zenodo.org/doi/10.5281/zenodo.8040109). They will be saved to `./data`.
+5. Satisfy the requirements of [LeanDojo](https://github.com/lean-dojo/LeanDojo#requirements).
 6. Use [LeanDojo](https://github.com/lean-dojo/LeanDojo) to trace all repos in the datasets: `python scripts/trace_repos.py`. This step may take some time. Please refer to [LeanDojo's documentation](https://leandojo.readthedocs.io/en/latest/) if you encounter any issues.
 
 
