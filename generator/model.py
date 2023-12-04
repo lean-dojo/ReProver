@@ -1,6 +1,4 @@
 """Lightning module for the tactic generator."""
-import re
-import time
 import torch
 import openai
 import pickle
@@ -8,9 +6,7 @@ from lean_dojo import Pos
 from loguru import logger
 import pytorch_lightning as pl
 from torchmetrics import Metric
-from lean_dojo.utils import execute
 from abc import ABC, abstractmethod
-from subprocess import CalledProcessError
 from typing import List, Dict, Any, Optional, Tuple
 from transformers import T5ForConditionalGeneration, AutoTokenizer
 
@@ -206,7 +202,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         output = self.generator.generate(
             input_ids=state_ids,
             attention_mask=state_mask,
-            max_length=self.max_seq_len,
+            max_length=256,
             num_beams=self.num_beams,
             do_sample=False,
             num_return_sequences=self.num_beams,
@@ -228,16 +224,35 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         for k in range(1, self.num_beams + 1):
             topk_acc = self.topk_accuracies[k]
             topk_acc(tactics_pred, batch["tactic"])
-            self.log(f"top{k}_acc_val", topk_acc, on_step=False, on_epoch=True)
+            self.log(
+                f"top{k}_acc_val",
+                topk_acc,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True,
+            )
 
     def on_validation_epoch_end(self) -> None:
+        if self.eval_num_theorems == 0:
+            return
+
+        from prover.evaluate import evaluate  # Avoid circular import.
+
         ckpt_path = f"{self.trainer.log_dir}/checkpoints/last.ckpt"
         self.trainer.save_checkpoint(ckpt_path)
-        logger.info(f"Saved checkpoint to {ckpt_path}")
+        logger.info(f"Saved checkpoint to {ckpt_path}. Evaluating...")
 
         data_path = self.trainer.datamodule.data_path
         if self.retriever is None:
-            cmd = f"python prover/evaluate.py --data-path {data_path} --num-cpus {self.eval_num_cpus} --num-theorems {self.eval_num_theorems} --ckpt_path {ckpt_path}"
+            acc = evaluate(
+                timeout=60,
+                data_path=data_path,
+                num_cpus=self.eval_num_cpus,
+                num_theorems=self.eval_num_theorems,
+                ckpt_path=ckpt_path,
+                verbose=True,
+            )
+            # cmd = f"VERBOSE=1 python prover/evaluate.py --timeout 60 --data-path {data_path} --num-cpus {self.eval_num_cpus} --num-theorems {self.eval_num_theorems} --ckpt_path {ckpt_path} --verbose"
         else:
             self.retriever.reindex_corpus(self.trainer.datamodule.eval_batch_size)
             corpus_path = f"{self.trainer.log_dir}/checkpoints/indexed_corpus.pickle"
@@ -247,27 +262,16 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
                 ),
                 open(corpus_path, "wb"),
             )
-            cmd = f"python prover/evaluate.py --data-path {data_path} --num-cpus {self.eval_num_cpus} --num-theorems {self.eval_num_theorems} --ckpt_path {ckpt_path} --indexed-corpus-path {corpus_path}"
+            acc = evaluate(
+                data_path=data_path,
+                num_cpus=self.eval_num_cpus,
+                num_theorems=self.eval_num_theorems,
+                ckpt_path=ckpt_path,
+                indexed_corpus_path=corpus_path,
+            )
+            # cmd = f"python prover/evaluate.py --data-path {data_path} --num-cpus {self.eval_num_cpus} --num-theorems {self.eval_num_theorems} --ckpt_path {ckpt_path} --indexed-corpus-path {corpus_path}"
 
-        logger.info(cmd)
-
-        wait_time = 3600
-        while True:
-            try:
-                _, err = execute(cmd, capture_output=True)
-                break
-            except CalledProcessError as ex:
-                logger.error(ex)
-                logger.error(
-                    f"Failed to evaluate. Retrying in {wait_time / 3600} hour..."
-                )
-                time.sleep(wait_time)
-                wait_time *= 2
-
-        m = re.search(r"Pass@1: (\S+)", err)
-        assert m is not None, err
-        acc = float(m.group(1))
-        self.log("Pass@1_val", acc, on_step=False, on_epoch=True)
+        self.log("Pass@1_val", acc, on_step=False, on_epoch=True, sync_dist=True)
         logger.info(f"Pass@1: {acc}")
 
     ##############
@@ -322,7 +326,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         output = self.generator.generate(
             input_ids=state_ids,
             attention_mask=state_mask,
-            max_length=self.max_seq_len,
+            max_length=256,
             num_beams=num_samples,
             length_penalty=self.length_penalty,
             do_sample=False,

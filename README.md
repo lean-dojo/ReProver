@@ -234,8 +234,7 @@ Check out [LeanInfer](https://github.com/lean-dojo/LeanInfer) if you want to run
 ```bash
 conda create --yes --name ReProver python=3.10 ipython numpy
 conda activate ReProver
-pip install torch --index-url https://download.pytorch.o
-rg/whl/cu117  # Depending on your CUDA version, see https://pytorch.org/.
+pip install torch --index-url https://download.pytorch.org/whl/cu117  # Depending on your CUDA version, see https://pytorch.org/.
 pip install tqdm loguru deepspeed pytorch-lightning[extra] transformers tensorboard openai rank_bm25 lean-dojo
 ```
 3. Prepend the repo's root to the `PYTHONPATH` environment variable.
@@ -265,7 +264,7 @@ The training script saves hyperparameters, model checkpoints, and other informat
 
 ### Retrieving Premises for All Proof States
 
-After the models are trained, run thcd v
+After the models are trained, run the following commands to retrieve premises for all proof states in the dataset.
 ```bash
 python retrieval/main.py predict --config retrieval/confs/cli_lean3_random.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
 python retrieval/main.py predict --config retrieval/confs/cli_lean3_novel_premises.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT

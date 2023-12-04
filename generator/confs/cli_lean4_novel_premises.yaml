@@ -24,12 +24,6 @@ trainer:
         save_last: true
         monitor: Pass@1_val
         mode: max
-    - class_path: pytorch_lightning.callbacks.EarlyStopping
-      init_args:
-        monitor: Pass@1_val
-        patience: 3
-        mode: max
-        verbose: true
 
 model:
   model_name: google/byt5-small
@@ -40,7 +34,7 @@ model:
   ret_ckpt_path: null
   eval_num_retrieved: 100
   eval_num_cpus: 12
-  eval_num_theorems: 200
+  eval_num_theorems: 0
 
 data:
   data_path: data/leandojo_benchmark_4/novel_premises/
