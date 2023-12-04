@@ -31,7 +31,7 @@ trainer:
 
 model:
   model_name: google/byt5-small
-  lr: 2e-4
+  lr: 1e-4
   warmup_steps: 2000
   num_retrieved: 100
 

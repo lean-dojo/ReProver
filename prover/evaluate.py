@@ -15,14 +15,21 @@ from common import set_logger
 from prover.proof_search import Status, DistributedProver
 
 
-def _get_theorems(args) -> Tuple[LeanGitRepo, List[Theorem], List[Pos]]:
+def _get_theorems(
+    data_path: str,
+    split: str,
+    file_path: str,
+    full_name: str,
+    name_filter: str,
+    num_theorems: int,
+) -> Tuple[LeanGitRepo, List[Theorem], List[Pos]]:
     repo, theorems, positions = _get_theorems_from_files(
-        args.data_path,
-        args.split,
-        args.file_path,
-        args.full_name,
-        args.name_filter,
-        args.num_theorems,
+        data_path,
+        split,
+        file_path,
+        full_name,
+        name_filter,
+        num_theorems,
     )
 
     all_repos = {thm.repo for thm in theorems}
@@ -75,17 +82,84 @@ def _get_theorems_from_files(
     return repo, theorems, positions
 
 
+def evaluate(
+    data_path: str,
+    exp_id: Optional[str] = None,
+    split: str = "val",
+    file_path: Optional[str] = None,
+    full_name: Optional[str] = None,
+    name_filter: Optional[str] = None,
+    num_theorems: Optional[int] = None,
+    ckpt_path: Optional[str] = None,
+    indexed_corpus_path: Optional[str] = None,
+    tactic: Optional[str] = None,
+    module: Optional[str] = None,
+    num_sampled_tactics: int = 64,
+    timeout: int = 600,
+    num_cpus: int = 1,
+    with_gpus: bool = False,
+    verbose: bool = False,
+) -> float:
+    set_logger(verbose)
+
+    repo, theorems, positions = _get_theorems(
+        data_path, split, file_path, full_name, name_filter, num_theorems
+    )
+
+    # Search for proofs using multiple concurrent provers.
+    prover = DistributedProver(
+        ckpt_path,
+        indexed_corpus_path,
+        tactic,
+        module,
+        num_cpus,
+        with_gpus=with_gpus,
+        timeout=timeout,
+        num_sampled_tactics=num_sampled_tactics,
+        debug=verbose,
+    )
+    results = prover.search_unordered(repo, theorems, positions)
+
+    # Calculate the result statistics.
+    num_proved = num_failed = num_discarded = 0
+    for r in results:
+        if r is None:
+            num_discarded += 1
+        elif r.status == Status.PROVED:
+            num_proved += 1
+        else:
+            num_failed += 1
+
+    logger.info(
+        f"Evaluation done! {num_proved} theorems proved, {num_failed} theorems failed, {num_discarded} non-theorems discarded"
+    )
+
+    if num_proved + num_failed == 0:
+        pass_1 = float("nan")
+    else:
+        pass_1 = num_proved / (num_proved + num_failed)
+
+    # Save the results.
+    if exp_id is None:
+        exp_id = str(uuid.uuid4())
+    pickle_path = f"{exp_id}_results.pickle"
+    pickle.dump(results, open(pickle_path, "wb"))
+    logger.info(f"Results saved to {pickle_path}")
+
+    return pass_1
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Script for evaluating the prover on theorems extracted by LeanDojo."
     )
-    parser.add_argument("--exp-id", type=str, help="Experiment ID used for logging.")
     parser.add_argument(
         "--data-path",
         type=str,
         required=True,
         help="Path to the data extracted by LeanDojo (e.g., data/leandojo_benchmark/random).",
     )
+    parser.add_argument("--exp-id", type=str, help="Experiment ID used for logging.")
     parser.add_argument(
         "--split",
         type=str,
@@ -134,53 +208,29 @@ def main() -> None:
 
     assert args.ckpt_path or args.tactic
 
-    # Randomly generate an experiment ID if not provided.
-    if args.exp_id is None:
-        args.exp_id = str(uuid.uuid4())
-
-    set_logger(args.verbose)
     logger.info(f"PID: {os.getpid()}")
     logger.info(args)
 
-    repo, theorems, positions = _get_theorems(args)
-
-    # Search for proofs using multiple concurrent provers.
-    prover = DistributedProver(
+    pass_1 = evaluate(
+        args.data_path,
+        args.exp_id,
+        args.split,
+        args.file_path,
+        args.full_name,
+        args.name_filter,
+        args.num_theorems,
         args.ckpt_path,
         args.indexed_corpus_path,
         args.tactic,
         args.module,
-        num_cpus=args.num_cpus,
-        with_gpus=args.with_gpus,
-        timeout=args.timeout,
-        num_sampled_tactics=args.num_sampled_tactics,
-        debug=args.verbose,
+        args.num_sampled_tactics,
+        args.timeout,
+        args.num_cpus,
+        args.with_gpus,
+        args.verbose,
     )
-    results = prover.search_unordered(repo, theorems, positions)
 
-    # Calculate the result statistics.
-    num_proved = num_failed = num_discarded = 0
-    for r in results:
-        if r is None:
-            num_discarded += 1
-        elif r.status == Status.PROVED:
-            num_proved += 1
-        else:
-            num_failed += 1
-
-    logger.info(
-        f"Evaluation done! {num_proved} theorems proved, {num_failed} theorems failed, {num_discarded} non-theorems discarded"
-    )
-    if num_proved + num_failed == 0:
-        logger.info("Pass@1 : NaN")
-    else:
-        logger.info(f"Pass@1: {num_proved / (num_proved + num_failed)}")
-
-    # Save the results.
-    if args.exp_id is not None:
-        pickle_path = f"{args.exp_id}_results.pickle"
-        pickle.dump(results, open(pickle_path, "wb"))
-        logger.info(f"Results saved to {pickle_path}")
+    logger.info(f"Pass@1: {pass_1}")
 
 
 if __name__ == "__main__":

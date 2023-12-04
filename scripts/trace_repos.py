@@ -20,7 +20,7 @@ def main() -> None:
     repos = set()
     for url, commit in url_commits:
         repo = LeanGitRepo(url, commit)
-        if not is_available_in_cache(repo):
+        if not is_available_in_cache(repo) and not repo.is_lean4:
             repos.add(repo)
 
     logger.info(f"Repos to trace: {repos}")
