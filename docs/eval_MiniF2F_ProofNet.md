@@ -11,7 +11,7 @@ For models without retrieval, run:
 python prover/evaluate.py --data-path data/leandojo_minif2f/default/  --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-cpus 8 --with-gpus
 ```
 
-For models with retrieval, first use the retriever to index the corpus (pre-computing the embeddings of all premises):
+For models with retrieval, first use the retriever to index the corpus (pre-computing the embeddings of all premises). 
 ```bash
 python retrieval/index.py --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --corpus-path data/leandojo_minif2f/corpus.jsonl --output-path PATH_TO_INDEXED_CORPUS
 ```
@@ -20,3 +20,4 @@ Then, run:
 ```bash
 python prover/evaluate.py --data-path data/leandojo_minif2f/default/  --ckpt_path PATH_TO_REPROVER_CHECKPOINT --indexed-corpus-path PATH_TO_INDEXED_CORPUS --split test --num-cpus 8 --with-gpus
 ```
+:warning: `PATH_TO_RETRIEVER_CHECKPOINT` must be the same as the `--model.ret_ckpt_path` argument when training `PATH_TO_REPROVER_CHECKPOINT`.
