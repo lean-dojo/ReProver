@@ -247,14 +247,11 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         data_path = self.trainer.datamodule.data_path
         if self.retriever is None:
             acc = evaluate(
-                timeout=60,
                 data_path=data_path,
                 num_cpus=self.eval_num_cpus,
                 num_theorems=self.eval_num_theorems,
                 ckpt_path=ckpt_path,
-                verbose=True,
             )
-            # cmd = f"VERBOSE=1 python prover/evaluate.py --timeout 60 --data-path {data_path} --num-cpus {self.eval_num_cpus} --num-theorems {self.eval_num_theorems} --ckpt_path {ckpt_path} --verbose"
         else:
             self.retriever.reindex_corpus(self.trainer.datamodule.eval_batch_size)
             corpus_path = f"{self.trainer.log_dir}/checkpoints/indexed_corpus.pickle"
@@ -271,7 +268,6 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
                 ckpt_path=ckpt_path,
                 indexed_corpus_path=corpus_path,
             )
-            # cmd = f"python prover/evaluate.py --data-path {data_path} --num-cpus {self.eval_num_cpus} --num-theorems {self.eval_num_theorems} --ckpt_path {ckpt_path} --indexed-corpus-path {corpus_path}"
 
         self.log("Pass@1_val", acc, on_step=False, on_epoch=True, sync_dist=True)
         logger.info(f"Pass@1: {acc}")
