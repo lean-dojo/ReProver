@@ -97,10 +97,10 @@ use the vectors to perform retrieval by maximizing cosine similarity.
 ```python
 import torch
 from typing import Union, List
-from transformers import AutoTokenizer, T5EncoderModel
+from transformers import AutoTokenizer, AutoModelForTextEncoding
 
 tokenizer = AutoTokenizer.from_pretrained("kaiyuy/leandojo-lean3-retriever-byt5-small")
-model = T5EncoderModel.from_pretrained("kaiyuy/leandojo-lean3-retriever-byt5-small")
+model = AutoModelForTextEncoding.from_pretrained("kaiyuy/leandojo-lean3-retriever-byt5-small")
 
 state = "n : ℕ\n⊢ gcd n n = n"
 premises = [
@@ -234,7 +234,7 @@ Check out [LeanInfer](https://github.com/lean-dojo/LeanInfer) if you want to run
 ```bash
 conda create --yes --name ReProver python=3.10 ipython numpy
 conda activate ReProver
-pip install torch --index-url https://download.pytorch.org/whl/cu117  # Depending on your CUDA version, see https://pytorch.org/.
+pip install torch --index-url https://download.pytorch.org/whl/cu121  # Depending on your CUDA version; see https://pytorch.org/.
 pip install tqdm loguru deepspeed pytorch-lightning[extra] transformers tensorboard openai rank_bm25 lean-dojo
 ```
 3. Prepend the repo's root to the `PYTHONPATH` environment variable.
@@ -294,9 +294,9 @@ Similar to premise selection, you can run `python generator/main.py --help` and 
 
 To train tactic generators without retrieval:
 ```bash
-python generator/main.py fit --config generator/confs/cli_lean3_random.yaml           # LeanDojo Benchmark, `random` split
-python generator/main.py fit --config generator/confs/cli_lean3_novel_premises.yaml   # LeanDojo Benchmark, `novel_premises` split
-python generator/main.py fit --config generator/confs/cli_lean4_random.yaml     # LeanDojo Benchmark 4, `random` split
+python generator/main.py fit --config generator/confs/cli_lean3_random.yaml             # LeanDojo Benchmark, `random` split
+python generator/main.py fit --config generator/confs/cli_lean3_novel_premises.yaml     # LeanDojo Benchmark, `novel_premises` split
+python generator/main.py fit --config generator/confs/cli_lean4_random.yaml             # LeanDojo Benchmark 4, `random` split
 python generator/main.py fit --config generator/confs/cli_lean4_novel_premises.yaml     # LeanDojo Benchmark 4, `novel_premises` split
 ```
 
