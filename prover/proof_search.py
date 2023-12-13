@@ -37,7 +37,6 @@ class SearchResult:
     theorem: Theorem
     status: Status
     proof: Optional[List[str]]
-    tree: Node
 
     # Some statistics during proof search.
     actor_time: float
@@ -113,7 +112,6 @@ class BestFirstSearchProver:
                 theorem=thm,
                 status=self.root.status,
                 proof=proof,
-                tree=self.root,
                 actor_time=self.actor_time,
                 environment_time=self.environment_time,
                 total_time=self.total_time,
