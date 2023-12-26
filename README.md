@@ -224,7 +224,7 @@ induction n with n IH
 
 ## Using the Model Directly in Lean
 
-Check out [LeanInfer](https://github.com/lean-dojo/LeanInfer) if you want to run ReProver's tactic generator directly in Lean's VSCode workflow. 
+Check out [Lean Copilot](https://github.com/lean-dojo/LeanCopilot) if you want to run ReProver's tactic generator directly in Lean's VSCode workflow. 
 
 
 ## Requirements
