@@ -122,7 +122,6 @@ def evaluate(
         num_sampled_tactics=num_sampled_tactics,
         debug=verbose,
     )
-    import pdb; pdb.set_trace()
     results = prover.search_unordered(repo, theorems, positions)
 
     # Calculate the result statistics.

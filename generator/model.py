@@ -3,6 +3,7 @@ import torch
 import time
 import openai
 import pickle
+import multiprocessing.pool as mpp
 from lean_dojo import Pos
 from loguru import logger
 import pytorch_lightning as pl
@@ -357,6 +358,24 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         return tactics_with_scores
 
 
+def trial_completion_with_args(args_tuple: Tuple[openai.Client, int, float, Dict[str, Any]]) -> List[Tuple[str, float]]:
+    client, num_retries, backoff_time, completion_args = args_tuple
+    trial = 0
+    while trial < num_retries:
+        try:
+            responses = client.completions.create(**completion_args)
+            texts_and_logprobs: List[Tuple[str, float]] = []
+            for choice in responses.choices:
+                text = choice.text.strip()
+                logprob = sum(choice.logprobs.token_logprobs)
+                texts_and_logprobs.append((text, logprob))
+            return texts_and_logprobs
+        except openai.OpenAIError as e:
+            logger.error(f"OpenAI API returned an error: {e}")
+            trial += 1
+            logger.info(f"Retrying in {backoff_time} seconds...")
+            time.sleep(backoff_time)
+
 class VLLMGenerator(TacticGenerator):
     def __init__(
         self,
@@ -386,22 +405,7 @@ class VLLMGenerator(TacticGenerator):
         assert prompt_format.count("TACTIC_STATE") == 1
         self.num_retries = num_retries
 
-    def trial_completion_with_args(self, completion_args: Dict[str, Any]) -> List[Tuple[str, float]]:
-        trial = 0
-        while trial < self.num_retries:
-            try:
-                responses = self.client.completions.create(**completion_args)
-                texts_and_logprobs: List[Tuple[str, float]] = []
-                for choice in responses.choices:
-                    text = choice.text.strip()
-                    logprob = sum(choice.logprobs.token_logprobs)
-                    texts_and_logprobs.append((text, logprob))
-                return texts_and_logprobs
-            except openai.OpenAIError as e:
-                logger.error(f"OpenAI API returned an error: {e}")
-                trial += 1
-                logger.info(f"Retrying in {self.backoff_time} seconds...")
-                time.sleep(self.backoff_time)
+    
 
     def generate(
         self,
@@ -422,11 +426,18 @@ class VLLMGenerator(TacticGenerator):
             "top_p": 1.0,
             "echo": False,
             "stop": self.stop,
-            "prompt": [prompt]*num_samples,
+            "prompt": [prompt],
         }
-        return self.trial_completion_with_args(completion_args)
         
-
+        all_results = []
+        with mpp.ThreadPool(64) as p:
+            for result in p.imap(
+                trial_completion_with_args, 
+                [(self.client, self.num_retries, self.backoff_time, completion_args) for _ in range(num_samples)],
+            ):
+                all_results.extend(result)
+        return all_results
+        
     def batch_generate(
         self,
         state: List[str],
@@ -435,28 +446,10 @@ class VLLMGenerator(TacticGenerator):
         theorem_pos: List[Pos],
         num_samples: int,
     ) -> List[List[Tuple[str, float]]]:
-        # If no stochasticity, sample one tactic only.
-        assert self.temperature > 0 or len(num_samples) == 1
-        all_prompts: List[str] = []
-        for s in state:
-            prompt = self.prompt_format.replace("TACTIC_STATE", s.strip())
-            all_prompts.extend([prompt]*num_samples)
-        completion_args = {
-            "model": self.model,
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            "logprobs": 1,
-            "top_p": 1.0,
-            "echo": False,
-            "stop": self.stop,
-            "prompt": all_prompts
-        }
-        all_completions = self.trial_completion_with_args(completion_args)
-        assert len(all_completions) == len(state) * num_samples
-        all_tactics_with_scores: List[List[Tuple[str, float]]] = []
-        for i in range(len(state)):
-            all_tactics_with_scores.append(all_completions[i*num_samples:(i+1)*num_samples])
-        return all_tactics_with_scores
+        return [
+            self.generate(s, f, tfn, tp, num_samples)
+            for s, f, tfn, tp in zip_strict(state, file_path, theorem_full_name, theorem_pos)
+        ]
 
 class GPT4TacticGenerator(TacticGenerator):
     def __init__(
