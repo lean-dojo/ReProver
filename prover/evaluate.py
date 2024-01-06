@@ -8,7 +8,7 @@ import hashlib
 import argparse
 from loguru import logger
 from lean_dojo import Theorem
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Any
 from lean_dojo import LeanGitRepo, Theorem, Pos, is_available_in_cache
 
 from common import set_logger
@@ -23,6 +23,7 @@ def _get_theorems(
     name_filter: str,
     num_theorems: int,
 ) -> Tuple[LeanGitRepo, List[Theorem], List[Pos]]:
+    logger.info(f"Loading theorems from {data_path}...")
     repo, theorems, positions = _get_theorems_from_files(
         data_path,
         split,
@@ -31,6 +32,7 @@ def _get_theorems(
         name_filter,
         num_theorems,
     )
+    logger.info(f"Loaded theorems from {data_path}...")
 
     all_repos = {thm.repo for thm in theorems}
     for r in all_repos:
@@ -95,6 +97,7 @@ def evaluate(
     tactic: Optional[str] = None,
     module: Optional[str] = None,
     num_sampled_tactics: int = 64,
+    vllm_args: Optional[dict[str, Any]] = None,
     timeout: int = 600,
     num_cpus: int = 1,
     with_gpus: bool = False,
@@ -113,11 +116,13 @@ def evaluate(
         tactic,
         module,
         num_cpus,
+        vllm_args=vllm_args,
         with_gpus=with_gpus,
         timeout=timeout,
         num_sampled_tactics=num_sampled_tactics,
         debug=verbose,
     )
+    import pdb; pdb.set_trace()
     results = prover.search_unordered(repo, theorems, positions)
 
     # Calculate the result statistics.
@@ -204,30 +209,37 @@ def main() -> None:
     parser.add_argument(
         "--verbose", action="store_true", help="Set the logging level to DEBUG."
     )
+    parser.add_argument(
+        "--vllm-args-json-path", type=str, help="URL of the VLLM server."
+    )
     args = parser.parse_args()
 
-    assert args.ckpt_path or args.tactic
-
+    assert args.ckpt_path or args.tactic or args.vllm_args_json_path
+    if args.vllm_args_json_path:
+        vllm_args = json.load(open(args.vllm_args_json_path))
+    else:
+        vllm_args = None
     logger.info(f"PID: {os.getpid()}")
     logger.info(args)
 
     pass_1 = evaluate(
-        args.data_path,
-        args.exp_id,
-        args.split,
-        args.file_path,
-        args.full_name,
-        args.name_filter,
-        args.num_theorems,
-        args.ckpt_path,
-        args.indexed_corpus_path,
-        args.tactic,
-        args.module,
-        args.num_sampled_tactics,
-        args.timeout,
-        args.num_cpus,
-        args.with_gpus,
-        args.verbose,
+        data_path = args.data_path,
+        exp_id = args.exp_id,
+        split = args.split,
+        file_path = args.file_path,
+        full_name = args.full_name,
+        name_filter = args.name_filter,
+        num_theorems = args.num_theorems,
+        ckpt_path = args.ckpt_path,
+        indexed_corpus_path = args.indexed_corpus_path,
+        tactic = args.tactic,
+        module = args.module,
+        num_sampled_tactics = args.num_sampled_tactics,
+        vllm_args = vllm_args,
+        timeout = args.timeout,
+        num_cpus = args.num_cpus,
+        with_gpus = args.with_gpus,
+        verbose = args.verbose,
     )
 
     logger.info(f"Pass@1: {pass_1}")

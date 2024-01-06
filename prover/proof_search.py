@@ -22,12 +22,12 @@ from lean_dojo import (
 )
 from loguru import logger
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any
 from ray.util.actor_pool import ActorPool
 
 from common import zip_strict
 from prover.search_tree import *
-from generator.model import RetrievalAugmentedGenerator, FixedTacticGenerator
+from generator.model import RetrievalAugmentedGenerator, FixedTacticGenerator, VLLMGenerator
 
 
 @dataclass(frozen=True)
@@ -305,11 +305,26 @@ class CpuProver(BestFirstSearchProver):
         indexed_corpus_path: Optional[str],
         tactic: Optional[str],
         module: Optional[str],
+        vllm_args: Optional[dict[str, Any]],
         timeout: int,
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
-        if ckpt_path is None:
+        if vllm_args:
+            assert all(
+                key in vllm_args
+                for key in ["server_url", "model", "max_tokens", "temperature", "stop", "prompt_format"]
+            ), vllm_args
+            tac_gen = VLLMGenerator(
+                server_url=vllm_args["server_url"],
+                model=vllm_args["model"],
+                max_tokens=vllm_args["max_tokens"],
+                temperature=vllm_args["temperature"],
+                stop=vllm_args["stop"],
+                prompt_format=vllm_args["prompt_format"],
+                num_retries=vllm_args.get("num_retries", 3),
+            )
+        elif ckpt_path is None:
             tac_gen = FixedTacticGenerator(tactic, module)
         else:
             tac_gen = RetrievalAugmentedGenerator.load(
@@ -374,18 +389,29 @@ class DistributedProver:
         module: Optional[str],
         num_cpus: int,
         with_gpus: bool,
+        vllm_args: Optional[dict[str, Any]],
         timeout: int,
         num_sampled_tactics: int,
         debug: Optional[bool] = False,
     ) -> None:
-        if ckpt_path is None:
+        if ckpt_path is None and vllm_args is None:
             assert tactic and not indexed_corpus_path
         else:
             assert not tactic and not module
         self.distributed = num_cpus > 1
 
         if not self.distributed:
-            if ckpt_path is None:
+            if vllm_args:
+                tac_gen = VLLMGenerator(
+                    server_url=vllm_args["server_url"],
+                    model=vllm_args["model"],
+                    max_tokens=vllm_args["max_tokens"],
+                    temperature=vllm_args["temperature"],
+                    stop=vllm_args["stop"],
+                    prompt_format=vllm_args["prompt_format"],
+                    num_retries=vllm_args.get("num_retries", 3),
+                )
+            elif ckpt_path is None:
                 tac_gen = FixedTacticGenerator(tactic, module)
             else:
                 device = torch.device("cuda") if with_gpus else torch.device("cpu")
@@ -423,6 +449,7 @@ class DistributedProver:
                     indexed_corpus_path,
                     tactic,
                     module,
+                    vllm_args=vllm_args,
                     timeout=timeout,
                     num_sampled_tactics=num_sampled_tactics,
                     debug=debug,
