@@ -6,6 +6,7 @@ import ray
 import time
 import heapq
 import torch
+import json
 from lean_dojo import (
     Pos,
     Dojo,
@@ -45,6 +46,20 @@ class SearchResult:
     num_total_nodes: int
     num_searched_nodes: int
 
+    def serialize(self) -> str:
+        result_dict = {
+            "theorem": self.theorem.uid,
+            "status": self.status.name,
+            "proof": self.proof,
+            "actor_time": self.actor_time,
+            "environment_time": self.environment_time,
+            "total_time": self.total_time,
+            "num_total_nodes": self.num_total_nodes,
+            "num_searched_nodes": self.num_searched_nodes,
+        }
+        return json.dumps(result_dict)
+
+
 
 class BestFirstSearchProver:
     """A prover that uses best-first search to find proofs using a tactic generator."""
@@ -67,9 +82,21 @@ class BestFirstSearchProver:
         self.total_time = None
 
     def search(
-        self, repo: LeanGitRepo, thm: Theorem, pos: Pos
+        self, repo: LeanGitRepo, thm: Theorem, pos: Pos, progress_dir: Optional[str] = None
     ) -> Optional[SearchResult]:
         logger.info(f"Proving {thm}")
+        
+        theorem_uid = thm.uid
+        if progress_dir is not None:
+            assert os.path.isdir(progress_dir)
+            progress_file = os.path.join(progress_dir, theorem_uid + ".out")
+            assert not os.path.isfile(progress_file)
+            empty_placeholder_result = {
+                "theorem": thm.uid,
+                "status": Status.OPEN.name,
+                "proof": None,
+            }
+            json.dump(empty_placeholder_result, open(progress_file, "w"), ensure_ascii=False, indent=4)
 
         self.repo = repo
         self.theorem = thm
@@ -119,6 +146,8 @@ class BestFirstSearchProver:
                 num_searched_nodes=self.num_expansions,
             )
             logger.info(result)
+            if progress_dir is not None:
+                json.dump(result, open(progress_file, "w"), ensure_ascii=False, indent=4)
             return result
 
         except DojoInitError as ex:
@@ -460,19 +489,19 @@ class DistributedProver:
         self.prover_pool = ActorPool(provers)
 
     def search_unordered(
-        self, repo: LeanGitRepo, theorems: List[Theorem], positions: List[Pos]
+        self, repo: LeanGitRepo, theorems: List[Theorem], positions: List[Pos], progress_dir: Optional[str] = None
     ) -> List[SearchResult]:
         """Parallel proof search for `theorems`. The order of the results is not guaranteed to match the order of the input."""
         if not self.distributed:
             return [
-                self.prover.search(repo, thm, pos)
+                self.prover.search(repo, thm, pos, progress_dir)
                 for thm, pos in zip_strict(theorems, positions)
             ]
 
         try:
             results = list(
                 self.prover_pool.map_unordered(
-                    lambda p, x: p.search.remote(repo, x[0], x[1]),
+                    lambda p, x: p.search.remote(repo, x[0], x[1], progress_dir),
                     zip_strict(theorems, positions),
                 )
             )

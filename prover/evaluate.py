@@ -11,7 +11,7 @@ from lean_dojo import Theorem
 from typing import List, Tuple, Optional, Any
 from lean_dojo import LeanGitRepo, Theorem, Pos, is_available_in_cache
 
-from common import set_logger
+from common import set_logger, zip_strict
 from prover.proof_search import Status, DistributedProver
 
 
@@ -102,12 +102,30 @@ def evaluate(
     num_cpus: int = 1,
     with_gpus: bool = False,
     verbose: bool = False,
+    progress_dir: Optional[str] = None,
 ) -> float:
     set_logger(verbose)
 
     repo, theorems, positions = _get_theorems(
         data_path, split, file_path, full_name, name_filter, num_theorems
     )
+
+    # Don't do theorems that are already done.
+    finished_theorem_names = set()
+    if progress_dir is not None:
+        os.makedirs(progress_dir, exist_ok=True)
+        for file in os.listdir(progress_dir):
+            assert file.endswith(".out")
+            name = file[:-4]
+            assert name not in finished_theorem_names
+            finished_theorem_names.add(name)
+    unfinished_theorems, unfinished_positions = [], []
+    for theorem, position in zip_strict(theorems, positions):
+        if theorem.uid in finished_theorem_names:
+            continue
+        unfinished_theorems.append(theorem)
+        unfinished_positions.append(position)
+    logger.info(f"{len(unfinished_theorems)} theorems to prove")
 
     # Search for proofs using multiple concurrent provers.
     prover = DistributedProver(
@@ -122,7 +140,7 @@ def evaluate(
         num_sampled_tactics=num_sampled_tactics,
         debug=verbose,
     )
-    results = prover.search_unordered(repo, theorems, positions)
+    results = prover.search_unordered(repo, unfinished_theorems, unfinished_positions, progress_dir=progress_dir)
 
     # Calculate the result statistics.
     num_proved = num_failed = num_discarded = 0
@@ -211,6 +229,9 @@ def main() -> None:
     parser.add_argument(
         "--vllm-args-json-path", type=str, help="URL of the VLLM server."
     )
+    parser.add_argument(
+        "--progress-dir", type=str, help="Progress directory"
+    )
     args = parser.parse_args()
 
     assert args.ckpt_path or args.tactic or args.vllm_args_json_path
@@ -239,6 +260,7 @@ def main() -> None:
         num_cpus = args.num_cpus,
         with_gpus = args.with_gpus,
         verbose = args.verbose,
+        progress_dir = args.progress_dir,
     )
 
     logger.info(f"Pass@1: {pass_1}")

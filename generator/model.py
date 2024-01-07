@@ -429,14 +429,14 @@ class VLLMGenerator(TacticGenerator):
             "prompt": [prompt],
         }
         
-        all_results = []
         with mpp.ThreadPool(64) as p:
+            all_results = []
             for result in p.imap(
                 trial_completion_with_args, 
                 [(self.client, self.num_retries, self.backoff_time, completion_args) for _ in range(num_samples)],
             ):
                 all_results.extend(result)
-        return all_results
+            return all_results
         
     def batch_generate(
         self,
