@@ -57,7 +57,7 @@ class SearchResult:
             "num_total_nodes": self.num_total_nodes,
             "num_searched_nodes": self.num_searched_nodes,
         }
-        return json.dumps(result_dict)
+        return json.dumps(result_dict, ensure_ascii=False, indent=4)
 
 
 
@@ -147,7 +147,8 @@ class BestFirstSearchProver:
             )
             logger.info(result)
             if progress_dir is not None:
-                json.dump(result, open(progress_file, "w"), ensure_ascii=False, indent=4)
+                with open(progress_file, "w") as f:
+                    f.write(result.serialize())
             return result
 
         except DojoInitError as ex:
