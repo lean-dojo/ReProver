@@ -89,14 +89,6 @@ class BestFirstSearchProver:
         theorem_uid = thm.uid
         if progress_dir is not None:
             assert os.path.isdir(progress_dir)
-            progress_file = os.path.join(progress_dir, theorem_uid + ".out")
-            assert not os.path.isfile(progress_file)
-            empty_placeholder_result = {
-                "theorem": thm.uid,
-                "status": Status.OPEN.name,
-                "proof": None,
-            }
-            json.dump(empty_placeholder_result, open(progress_file, "w"), ensure_ascii=False, indent=4)
 
         self.repo = repo
         self.theorem = thm
