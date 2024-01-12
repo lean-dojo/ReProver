@@ -111,17 +111,15 @@ def evaluate(
     )
 
     # Don't do theorems that are already done.
-    finished_theorem_names = set()
+    finished_theorem_hashes = set()
     if progress_dir is not None:
         os.makedirs(progress_dir, exist_ok=True)
         for file in os.listdir(progress_dir):
             assert file.endswith(".out")
-            name = file[:-4]
-            assert name not in finished_theorem_names
-            finished_theorem_names.add(name)
+            finished_theorem_hashes.add(file[:-4])
     unfinished_theorems, unfinished_positions = [], []
-    for theorem, position in zip_strict(theorems, positions):
-        if theorem.uid in finished_theorem_names:
+    for theorem, position in zip(theorems, positions):
+        if theorem.uhash in finished_theorem_hashes:
             continue
         unfinished_theorems.append(theorem)
         unfinished_positions.append(position)

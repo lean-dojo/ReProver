@@ -139,7 +139,7 @@ class BestFirstSearchProver:
             )
             logger.info(result)
             if progress_dir is not None:
-                with open(progress_file, "w") as f:
+                with open(os.path.join(progress_dir, f"{thm.uhash}.out"), "w") as f:
                     f.write(result.serialize())
             return result
 

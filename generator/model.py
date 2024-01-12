@@ -405,7 +405,15 @@ class VLLMGenerator(TacticGenerator):
         assert prompt_format.count("TACTIC_STATE") == 1
         self.num_retries = num_retries
 
-    
+    def generate_from_args(self, args: List[Dict[str, Any]]) -> List[Tuple[str, float]]:
+        with mpp.ThreadPool(64) as p:
+            all_results = []
+            for result in p.imap(
+                trial_completion_with_args, 
+                [(self.client, self.num_retries, self.backoff_time, arg) for arg in args],
+            ):
+                all_results.extend(result)
+            return all_results
 
     def generate(
         self,
@@ -418,7 +426,11 @@ class VLLMGenerator(TacticGenerator):
         # If no stochasticity, sample one tactic only.
         assert self.temperature > 0 or len(num_samples) == 1
         prompt = self.prompt_format.replace("TACTIC_STATE", state.strip())
-        completion_args = {
+        completion_args = self.get_completion_args(prompt)
+        return self.generate_from_args([completion_args] * num_samples)
+    
+    def get_completion_args(self, prompt: str) -> dict[str, Any]:
+        return {
             "model": self.model,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
@@ -428,16 +440,7 @@ class VLLMGenerator(TacticGenerator):
             "stop": self.stop,
             "prompt": [prompt],
         }
-        
-        with mpp.ThreadPool(64) as p:
-            all_results = []
-            for result in p.imap(
-                trial_completion_with_args, 
-                [(self.client, self.num_retries, self.backoff_time, completion_args) for _ in range(num_samples)],
-            ):
-                all_results.extend(result)
-            return all_results
-        
+
     def batch_generate(
         self,
         state: List[str],
@@ -446,10 +449,14 @@ class VLLMGenerator(TacticGenerator):
         theorem_pos: List[Pos],
         num_samples: int,
     ) -> List[List[Tuple[str, float]]]:
-        return [
-            self.generate(s, f, tfn, tp, num_samples)
-            for s, f, tfn, tp in zip_strict(state, file_path, theorem_full_name, theorem_pos)
-        ]
+        all_args: List[Dict[str, Any]] = []
+        for s in state:
+            prompt = self.prompt_format.replace("TACTIC_STATE", s.strip())
+            completion_args = self.get_completion_args(prompt)
+            for _ in range(num_samples):
+                all_args.append(completion_args)
+
+        return self.generate_from_args(all_args)
 
 class GPT4TacticGenerator(TacticGenerator):
     def __init__(
