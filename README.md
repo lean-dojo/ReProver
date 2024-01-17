@@ -82,12 +82,12 @@ for tac in tactic_candidates:
 
 The expected output is shown below. `<a>` and `</a>` are markers of premises in generated tactics. You should remove them when using the tactics.
 ```
-rw [<a>nat.gcd</a>, <a>nat.gcd_self_right</a>]
+cases n
 
+cases n
 simp [<a>nat.gcd</a>]
-unfold gcd
-rw [<a>nat.gcd_comm</a>]
-rw [<a>nat.gcd</a>, <a>nat.gcd_self_right</a>]
+rw <a>nat.gcd_comm</a>
+by_cases hn : n = 0
 ```
 
 
@@ -140,7 +140,7 @@ def retrieve(state: str, premises: List[str], k: int) -> List[str]:
     topk = scores.topk(k).indices.tolist()
     return [premises[i] for i in topk]
 
-for p in retrieve(state, premises, k=3):
+for p in retrieve(state, premises, k=4):
     print(p, end="\n\n")
 ```
 
@@ -152,6 +152,8 @@ def <a>nat.gcd</a> : nat → nat → nat
                 gcd (y % succ x) (succ x)
 
 @[simp] theorem <a>nat.gcd_zero_left</a> (x : nat) : gcd 0 x = x
+
+@[simp] theorem <a>nat.gcd_succ</a> (x y : nat) : gcd (succ x) y = gcd (y % succ x) (succ x)
 
 @[simp] theorem <a>nat.mod_self</a> (n : nat) : n % n = 0
 ```
