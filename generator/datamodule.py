@@ -1,4 +1,5 @@
 """Data module for the tactic generator."""
+
 import os
 import json
 import pickle

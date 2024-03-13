@@ -1,4 +1,5 @@
 """Script to download LeanDojo Benchmark and LeanDojo Benchmark 4 into `./data`."""
+
 import os
 import argparse
 from hashlib import md5
@@ -9,11 +10,11 @@ LEANDOJO_BENCHMARK_URL = (
     "https://zenodo.org/records/10114157/files/leandojo_benchmark_v5.tar.gz"
 )
 LEANDOJO_BENCHMARK_4_URL = (
-    "https://zenodo.org/records/10114185/files/leandojo_benchmark_4_v5.tar.gz"
+    "https://zenodo.org/records/10811294/files/leandojo_benchmark_4_v7.tar.gz"
 )
 DOWNLOADS = {
     LEANDOJO_BENCHMARK_URL: "4b256200618d4668b12a9cfe8c4df4d3",
-    LEANDOJO_BENCHMARK_4_URL: "5c1bb0ce1fd1572e8c3d0c3a642e356f",
+    LEANDOJO_BENCHMARK_4_URL: "cfb5ac28847b5a7c7856d7b28eefdc1b",
 }
 
 

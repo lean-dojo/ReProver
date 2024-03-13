@@ -1,5 +1,6 @@
 """Script for indexing the corpus using the retriever.
 """
+
 import torch
 import pickle
 import argparse

@@ -1,5 +1,6 @@
 """Proof search using best-first search.
 """
+
 import os
 import sys
 import ray

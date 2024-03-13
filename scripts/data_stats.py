@@ -1,4 +1,5 @@
 """Scripts for computing some simple statistics about the data."""
+
 import json
 import argparse
 import numpy as np

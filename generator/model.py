@@ -1,4 +1,5 @@
 """Lightning module for the tactic generator."""
+
 import torch
 import openai
 import pickle
