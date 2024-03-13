@@ -238,7 +238,7 @@ Check out [Lean Copilot](https://github.com/lean-dojo/LeanCopilot) if you want t
 conda create --yes --name ReProver python=3.10 ipython numpy
 conda activate ReProver
 pip install torch --index-url https://download.pytorch.org/whl/cu121  # Depending on your CUDA version; see https://pytorch.org/.
-pip install tqdm loguru deepspeed pytorch-lightning[extra] transformers tensorboard openai rank_bm25 lean-dojo
+pip install tqdm loguru deepspeed "pytorch-lightning[extra]" transformers tensorboard openai rank_bm25 lean-dojo
 ```
 3. Prepend the repo's root to the `PYTHONPATH` environment variable.
 4. Make sure `wget` and `tar` are available. Then, run `python scripts/download_data.py` to download [LeanDojo Benchmark](https://zenodo.org/doi/10.5281/zenodo.8016385) and [LeanDojo Benchmark 4](https://zenodo.org/doi/10.5281/zenodo.8040109). They will be saved to `./data`.
