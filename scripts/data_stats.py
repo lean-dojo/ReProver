@@ -14,11 +14,15 @@ from common import Corpus
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-path", type=Path, default="data/leandojo_benchmark/")
+    parser.add_argument("--data-path", type=Path, default="data/leandojo_benchmark_4/")
     args = parser.parse_args()
     logger.info(args)
 
     corpus = Corpus(args.data_path / "corpus.jsonl")
+    for x in corpus.files: 
+        if "td/" in x.path: 
+            print(x.path)
+    import pdb; pdb.set_trace()
 
     logger.info(f"Number of files: {corpus.num_files}")
     logger.info(f"Number of premises: {len(corpus)}")
