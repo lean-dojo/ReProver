@@ -7,10 +7,10 @@ from loguru import logger
 
 
 LEANDOJO_BENCHMARK_4_URL = (
-    "https://zenodo.org/records/10811294/files/leandojo_benchmark_4_v7.tar.gz"
+    "https://zenodo.org/records/10823489/files/leandojo_benchmark_4.tar.gz"
 )
 DOWNLOADS = {
-    LEANDOJO_BENCHMARK_4_URL: "cfb5ac28847b5a7c7856d7b28eefdc1b",
+    LEANDOJO_BENCHMARK_4_URL: "c45383c1a94b0ab17395401fc8b03f36",
 }
 
 
