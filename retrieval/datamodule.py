@@ -23,7 +23,6 @@ class RetrievalDataset(Dataset):
     def __init__(
         self,
         data_paths: List[str],
-        uses_lean4: bool,
         corpus: Corpus,
         num_negatives: int,
         num_in_file_negatives: int,
@@ -228,7 +227,6 @@ class RetrievalDataModule(pl.LightningDataModule):
 
         metadata = json.load(open(os.path.join(data_path, "../metadata.json")))
         repo = LeanGitRepo(**metadata["from_repo"])
-        self.uses_lean4 = repo.uses_lean4
 
     def prepare_data(self) -> None:
         pass
@@ -237,7 +235,6 @@ class RetrievalDataModule(pl.LightningDataModule):
         if stage in (None, "fit"):
             self.ds_train = RetrievalDataset(
                 [os.path.join(self.data_path, "train.json")],
-                self.uses_lean4,
                 self.corpus,
                 self.num_negatives,
                 self.num_in_file_negatives,
@@ -249,7 +246,6 @@ class RetrievalDataModule(pl.LightningDataModule):
         if stage in (None, "fit", "validate"):
             self.ds_val = RetrievalDataset(
                 [os.path.join(self.data_path, "val.json")],
-                self.uses_lean4,
                 self.corpus,
                 self.num_negatives,
                 self.num_in_file_negatives,
@@ -264,7 +260,6 @@ class RetrievalDataModule(pl.LightningDataModule):
                     os.path.join(self.data_path, f"{split}.json")
                     for split in ("train", "val", "test")
                 ],
-                self.uses_lean4,
                 self.corpus,
                 self.num_negatives,
                 self.num_in_file_negatives,

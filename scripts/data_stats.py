@@ -19,10 +19,6 @@ def main() -> None:
     logger.info(args)
 
     corpus = Corpus(args.data_path / "corpus.jsonl")
-    for x in corpus.files: 
-        if "td/" in x.path: 
-            print(x.path)
-    import pdb; pdb.set_trace()
 
     logger.info(f"Number of files: {corpus.num_files}")
     logger.info(f"Number of premises: {len(corpus)}")
