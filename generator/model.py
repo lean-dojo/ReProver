@@ -1,8 +1,10 @@
 """Lightning module for the tactic generator."""
 
 import torch
+import time
 import openai
 import pickle
+import multiprocessing.pool as mpp
 from lean_dojo import Pos
 from loguru import logger
 import pytorch_lightning as pl
@@ -356,6 +358,106 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
 
         return tactics_with_scores
 
+
+def trial_completion_with_args(args_tuple: Tuple[openai.Client, int, float, Dict[str, Any]]) -> List[Tuple[str, float]]:
+    client, num_retries, backoff_time, completion_args = args_tuple
+    trial = 0
+    while trial < num_retries:
+        try:
+            responses = client.completions.create(**completion_args)
+            texts_and_logprobs: List[Tuple[str, float]] = []
+            for choice in responses.choices:
+                text = choice.text.strip()
+                logprob = sum(choice.logprobs.token_logprobs)
+                texts_and_logprobs.append((text, logprob))
+            return texts_and_logprobs
+        except openai.OpenAIError as e:
+            logger.error(f"OpenAI API returned an error: {e}")
+            trial += 1
+            logger.info(f"Retrying in {backoff_time} seconds...")
+            time.sleep(backoff_time)
+
+class VLLMGenerator(TacticGenerator):
+    def __init__(
+        self,
+        server_url: str,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+        stop: List[str],
+        prompt_format: str,
+        num_retries: int = 3,
+    ):
+        super().__init__()
+        if not server_url.startswith("http"):
+            server_url = f"http://{server_url}"
+        if not server_url.endswith("/v1"):
+            server_url = f"{server_url.rstrip('/')}/v1"
+        logger.info(f"Connecting to VLLM server at {server_url}")
+        self.server_url = server_url
+        self.client = openai.OpenAI(base_url=server_url, api_key="NONE")
+        logger.info(f"Initialized vllm client at {self.server_url}")
+        self.backoff_time = 3.0
+        self.model = model
+        self.stop = stop
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.prompt_format = prompt_format
+        assert prompt_format.count("TACTIC_STATE") == 1
+        self.num_retries = num_retries
+
+    def generate_from_args(self, args: List[Dict[str, Any]]) -> List[Tuple[str, float]]:
+        with mpp.ThreadPool(64) as p:
+            all_results = []
+            for result in p.imap(
+                trial_completion_with_args, 
+                [(self.client, self.num_retries, self.backoff_time, arg) for arg in args],
+            ):
+                all_results.extend(result)
+            return all_results
+
+    def generate(
+        self,
+        state: str,
+        file_path: str,
+        theorem_full_name: str,
+        theorem_pos: Pos,
+        num_samples: int,
+    ) -> List[Tuple[str, float]]:
+        # If no stochasticity, sample one tactic only.
+        assert self.temperature > 0 or len(num_samples) == 1
+        prompt = self.prompt_format.replace("TACTIC_STATE", state.strip())
+        completion_args = self.get_completion_args(prompt)
+        return self.generate_from_args([completion_args] * num_samples)
+    
+    def get_completion_args(self, prompt: str) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "logprobs": 1,
+            "top_p": 1.0,
+            "echo": False,
+            "stop": self.stop,
+            "prompt": [prompt],
+        }
+
+    def batch_generate(
+        self,
+        state: List[str],
+        file_path: List[str],
+        theorem_full_name: List[str],
+        theorem_pos: List[Pos],
+        num_samples: int,
+    ) -> List[List[Tuple[str, float]]]:
+        all_args: List[Dict[str, Any]] = []
+        for s in state:
+            prompt = self.prompt_format.replace("TACTIC_STATE", s.strip())
+            completion_args = self.get_completion_args(prompt)
+            for _ in range(num_samples):
+                all_args.append(completion_args)
+
+        return self.generate_from_args(all_args)
 
 class GPT4TacticGenerator(TacticGenerator):
     def __init__(
