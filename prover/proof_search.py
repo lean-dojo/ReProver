@@ -435,7 +435,7 @@ class DistributedProver:
 
     def search_unordered(
         self, repo: LeanGitRepo, theorems: List[Theorem], positions: List[Pos]
-    ) -> List[SearchResult]:
+    ) -> List[Optional[SearchResult]]:
         """Parallel proof search for `theorems`. The order of the results is not guaranteed to match the order of the input."""
         if not self.distributed:
             return [
