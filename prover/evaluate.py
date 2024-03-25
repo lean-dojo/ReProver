@@ -97,8 +97,8 @@ def evaluate(
     module: Optional[str] = None,
     num_sampled_tactics: int = 64,
     timeout: int = 600,
-    num_cpus: int = 1,
-    with_gpus: bool = False,
+    num_workers: int = 1,
+    num_gpus: int = 0,
     verbose: bool = False,
 ) -> float:
     set_logger(verbose)
@@ -113,8 +113,8 @@ def evaluate(
         indexed_corpus_path,
         tactic,
         module,
-        num_cpus,
-        with_gpus=with_gpus,
+        num_workers,
+        num_gpus=num_gpus,
         timeout=timeout,
         num_sampled_tactics=num_sampled_tactics,
         debug=verbose,
@@ -197,10 +197,10 @@ def main() -> None:
         help="Maximum number of seconds the proof search can take.",
     )
     parser.add_argument(
-        "--num-cpus", type=int, default=1, help="The number of concurrent provers."
+        "--num-workers", type=int, default=1, help="The number of concurrent provers."
     )
     parser.add_argument(
-        "--with-gpus", action="store_true", help="Use GPUs for proof search."
+        "--num-gpus", type=int, default=0, help="The number of GPUs for proof search."
     )
     parser.add_argument(
         "--verbose", action="store_true", help="Set the logging level to DEBUG."
@@ -226,8 +226,8 @@ def main() -> None:
         args.module,
         args.num_sampled_tactics,
         args.timeout,
-        args.num_cpus,
-        args.with_gpus,
+        args.num_workers,
+        args.num_gpus,
         args.verbose,
     )
 
