@@ -11,7 +11,7 @@ trainer:
       cpu_checkpointing: false
   gradient_clip_val: 1.0
   max_steps: 500000
-  check_val_every_n_epoch: 2
+  check_val_every_n_epoch: 1
   num_sanity_val_steps: 0
   callbacks:
     - class_path: pytorch_lightning.callbacks.LearningRateMonitor
@@ -26,8 +26,9 @@ model:
   length_penalty: 0.0
   ret_ckpt_path: null
   eval_num_retrieved: 100
-  eval_num_cpus: 12
-  eval_num_theorems: 0
+  eval_num_workers: 8
+  eval_num_gpus: 1
+  eval_num_theorems: 400
 
 data:
   data_path: data/leandojo_benchmark_4/novel_premises/

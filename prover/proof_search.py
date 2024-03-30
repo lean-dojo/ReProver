@@ -401,7 +401,6 @@ class DistributedProver:
             )
             return
 
-        ray.init()
         if num_gpus >= 1:
             logger.info(f"Launching {num_workers} workers with {num_gpus} GPUs.")
             num_gpus_per_worker = num_gpus / num_workers

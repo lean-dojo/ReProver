@@ -83,7 +83,8 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         warmup_steps: int,
         num_beams: int,
         eval_num_retrieved: int,
-        eval_num_cpus: int,
+        eval_num_workers: int,
+        eval_num_gpus: int,
         eval_num_theorems: int,
         max_inp_seq_len: int,
         max_oup_seq_len: int,
@@ -97,7 +98,8 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         self.num_beams = num_beams
         self.length_penalty = length_penalty
         self.eval_num_retrieved = eval_num_retrieved
-        self.eval_num_cpus = eval_num_cpus
+        self.eval_num_workers = eval_num_workers
+        self.eval_num_gpus = eval_num_gpus
         self.eval_num_theorems = eval_num_theorems
         self.max_inp_seq_len = max_inp_seq_len
         self.max_oup_seq_len = max_oup_seq_len
@@ -244,12 +246,14 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         ckpt_path = f"{self.trainer.log_dir}/checkpoints/last.ckpt"
         self.trainer.save_checkpoint(ckpt_path)
         logger.info(f"Saved checkpoint to {ckpt_path}. Evaluating...")
+        torch.cuda.empty_cache()
 
         data_path = self.trainer.datamodule.data_path
         if self.retriever is None:
             acc = evaluate(
                 data_path=data_path,
-                num_cpus=self.eval_num_cpus,
+                num_workers=self.eval_num_workers,
+                num_gpus=self.eval_num_gpus,
                 num_theorems=self.eval_num_theorems,
                 ckpt_path=ckpt_path,
             )
@@ -264,7 +268,8 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             )
             acc = evaluate(
                 data_path=data_path,
-                num_cpus=self.eval_num_cpus,
+                num_workers=self.eval_num_workers,
+                num_gpus=self.eval_num_gpus,
                 num_theorems=self.eval_num_theorems,
                 ckpt_path=ckpt_path,
                 indexed_corpus_path=corpus_path,
