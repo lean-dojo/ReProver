@@ -306,8 +306,8 @@ After the tactic generator is trained, we combine it with best-first search to p
 
 For models without retrieval, run:
 ```bash
-python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/ --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-cpus 8 --with-gpus
-python prover/evaluate.py --data-path data/leandojo_benchmark_4/novel_premises/ --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-cpus 8 --with-gpus
+python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/ --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-workers 8 --num-gpus 1
+python prover/evaluate.py --data-path data/leandojo_benchmark_4/novel_premises/ --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-workers 8 --num-gpus 1
 ```
 
 For models with retrieval, first use the retriever to index the corpus (pre-computing the embeddings of all premises):

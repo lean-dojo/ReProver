@@ -208,6 +208,7 @@ def main() -> None:
     args = parser.parse_args()
 
     assert args.ckpt_path or args.tactic
+    assert args.num_gpus <= args.num_workers
 
     logger.info(f"PID: {os.getpid()}")
     logger.info(args)

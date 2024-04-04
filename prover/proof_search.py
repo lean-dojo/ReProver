@@ -100,8 +100,8 @@ class BestFirstSearchProver:
                 with torch.no_grad():
                     try:
                         self._best_first_search()
-                    except DojoCrashError:
-                        logger.warning(f"Dojo crashed when proving {thm}")
+                    except DojoCrashError as ex:
+                        logger.warning(f"Dojo crashed with {ex} when proving {thm}")
                         pass
 
             if self.root.status == Status.PROVED:
@@ -389,7 +389,7 @@ class DistributedProver:
             if ckpt_path is None:
                 tac_gen = FixedTacticGenerator(tactic, module)
             else:
-                device = torch.device("cuda") if with_gpus else torch.device("cpu")
+                device = torch.device("cuda") if num_gpus > 0 else torch.device("cpu")
                 tac_gen = RetrievalAugmentedGenerator.load(
                     ckpt_path, device=device, freeze=True
                 )
