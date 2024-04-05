@@ -12,7 +12,7 @@ from lean_dojo import Theorem
 from typing import List, Tuple, Optional, Any
 from lean_dojo import LeanGitRepo, Theorem, Pos, is_available_in_cache
 
-from common import set_logger, zip_strict
+from common import set_logger
 from prover.proof_search import Status, DistributedProver
 
 
@@ -139,7 +139,9 @@ def evaluate(
         num_sampled_tactics=num_sampled_tactics,
         debug=verbose,
     )
-    results = prover.search_unordered(repo, unfinished_theorems, unfinished_positions, progress_dir=progress_dir)
+    results = prover.search_unordered(
+        repo, unfinished_theorems, unfinished_positions, progress_dir=progress_dir
+    )
 
     # Calculate the result statistics.
     num_proved = num_failed = num_discarded = 0
@@ -228,9 +230,7 @@ def main() -> None:
     parser.add_argument(
         "--vllm-args-json-path", type=str, help="URL of the VLLM server."
     )
-    parser.add_argument(
-        "--progress-dir", type=str, help="Progress directory"
-    )
+    parser.add_argument("--progress-dir", type=str, help="Progress directory")
     args = parser.parse_args()
 
     assert args.ckpt_path or args.tactic or args.vllm_args_json_path
@@ -244,24 +244,24 @@ def main() -> None:
     logger.info(args)
 
     pass_1 = evaluate(
-        data_path = args.data_path,
-        exp_id = args.exp_id,
-        split = args.split,
-        file_path = args.file_path,
-        full_name = args.full_name,
-        name_filter = args.name_filter,
-        num_theorems = args.num_theorems,
-        ckpt_path = args.ckpt_path,
-        indexed_corpus_path = args.indexed_corpus_path,
-        tactic = args.tactic,
-        module = args.module,
-        num_sampled_tactics = args.num_sampled_tactics,
-        vllm_args = vllm_args,
-        timeout = args.timeout,
-        num_workers = args.num_workers,
-        num_gpus = args.num_gpus,
-        verbose = args.verbose,
-        progress_dir = args.progress_dir,
+        data_path=args.data_path,
+        exp_id=args.exp_id,
+        split=args.split,
+        file_path=args.file_path,
+        full_name=args.full_name,
+        name_filter=args.name_filter,
+        num_theorems=args.num_theorems,
+        ckpt_path=args.ckpt_path,
+        indexed_corpus_path=args.indexed_corpus_path,
+        tactic=args.tactic,
+        module=args.module,
+        num_sampled_tactics=args.num_sampled_tactics,
+        vllm_args=vllm_args,
+        timeout=args.timeout,
+        num_workers=args.num_workers,
+        num_gpus=args.num_gpus,
+        verbose=args.verbose,
+        progress_dir=args.progress_dir,
     )
 
     logger.info(f"Pass@1: {pass_1}")

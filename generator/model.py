@@ -364,7 +364,9 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         return tactics_with_scores
 
 
-def trial_completion_with_args(args_tuple: Tuple[openai.Client, int, float, Dict[str, Any]]) -> List[Tuple[str, float]]:
+def trial_completion_with_args(
+    args_tuple: Tuple[openai.Client, int, float, Dict[str, Any]]
+) -> List[Tuple[str, float]]:
     client, num_retries, backoff_time, completion_args = args_tuple
     trial = 0
     while trial < num_retries:
@@ -381,6 +383,7 @@ def trial_completion_with_args(args_tuple: Tuple[openai.Client, int, float, Dict
             trial += 1
             logger.info(f"Retrying in {backoff_time} seconds...")
             time.sleep(backoff_time)
+
 
 class VLLMGenerator(TacticGenerator):
     def __init__(
@@ -415,8 +418,11 @@ class VLLMGenerator(TacticGenerator):
         with mpp.ThreadPool(64) as p:
             all_results = []
             for result in p.imap(
-                trial_completion_with_args, 
-                [(self.client, self.num_retries, self.backoff_time, arg) for arg in args],
+                trial_completion_with_args,
+                [
+                    (self.client, self.num_retries, self.backoff_time, arg)
+                    for arg in args
+                ],
             ):
                 all_results.extend(result)
             return all_results
@@ -434,7 +440,7 @@ class VLLMGenerator(TacticGenerator):
         prompt = self.prompt_format.replace("TACTIC_STATE", state.strip())
         completion_args = self.get_completion_args(prompt)
         return self.generate_from_args([completion_args] * num_samples)
-    
+
     def get_completion_args(self, prompt: str) -> dict[str, Any]:
         return {
             "model": self.model,
@@ -463,6 +469,7 @@ class VLLMGenerator(TacticGenerator):
                 all_args.append(completion_args)
 
         return self.generate_from_args(all_args)
+
 
 class GPT4TacticGenerator(TacticGenerator):
     def __init__(

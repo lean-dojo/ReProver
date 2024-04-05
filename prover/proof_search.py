@@ -29,7 +29,11 @@ from ray.util.actor_pool import ActorPool
 
 from common import zip_strict
 from prover.search_tree import *
-from generator.model import RetrievalAugmentedGenerator, FixedTacticGenerator, VLLMGenerator
+from generator.model import (
+    RetrievalAugmentedGenerator,
+    FixedTacticGenerator,
+    VLLMGenerator,
+)
 
 
 @dataclass(frozen=True)
@@ -61,7 +65,6 @@ class SearchResult:
         return json.dumps(result_dict, ensure_ascii=False, indent=4)
 
 
-
 class BestFirstSearchProver:
     """A prover that uses best-first search to find proofs using a tactic generator."""
 
@@ -83,10 +86,14 @@ class BestFirstSearchProver:
         self.total_time = None
 
     def search(
-        self, repo: LeanGitRepo, thm: Theorem, pos: Pos, progress_dir: Optional[str] = None
+        self,
+        repo: LeanGitRepo,
+        thm: Theorem,
+        pos: Pos,
+        progress_dir: Optional[str] = None,
     ) -> Optional[SearchResult]:
         logger.info(f"Proving {thm}")
-        
+
         theorem_uid = thm.uid
         if progress_dir is not None:
             assert os.path.isdir(progress_dir)
@@ -336,7 +343,14 @@ class CpuProver(BestFirstSearchProver):
         if vllm_args:
             assert all(
                 key in vllm_args
-                for key in ["server_url", "model", "max_tokens", "temperature", "stop", "prompt_format"]
+                for key in [
+                    "server_url",
+                    "model",
+                    "max_tokens",
+                    "temperature",
+                    "stop",
+                    "prompt_format",
+                ]
             ), vllm_args
             tac_gen = VLLMGenerator(
                 server_url=vllm_args["server_url"],
@@ -483,7 +497,11 @@ class DistributedProver:
         self.prover_pool = ActorPool(provers)
 
     def search_unordered(
-        self, repo: LeanGitRepo, theorems: List[Theorem], positions: List[Pos], progress_dir: Optional[str] = None
+        self,
+        repo: LeanGitRepo,
+        theorems: List[Theorem],
+        positions: List[Pos],
+        progress_dir: Optional[str] = None,
     ) -> List[SearchResult]:
         """Parallel proof search for `theorems`. The order of the results is not guaranteed to match the order of the input."""
         if not self.distributed:
