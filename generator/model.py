@@ -1,4 +1,5 @@
 """Lightning module for the tactic generator."""
+
 import torch
 import time
 import openai
@@ -84,7 +85,8 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         warmup_steps: int,
         num_beams: int,
         eval_num_retrieved: int,
-        eval_num_cpus: int,
+        eval_num_workers: int,
+        eval_num_gpus: int,
         eval_num_theorems: int,
         max_inp_seq_len: int,
         max_oup_seq_len: int,
@@ -98,7 +100,8 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         self.num_beams = num_beams
         self.length_penalty = length_penalty
         self.eval_num_retrieved = eval_num_retrieved
-        self.eval_num_cpus = eval_num_cpus
+        self.eval_num_workers = eval_num_workers
+        self.eval_num_gpus = eval_num_gpus
         self.eval_num_theorems = eval_num_theorems
         self.max_inp_seq_len = max_inp_seq_len
         self.max_oup_seq_len = max_oup_seq_len
@@ -245,12 +248,14 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         ckpt_path = f"{self.trainer.log_dir}/checkpoints/last.ckpt"
         self.trainer.save_checkpoint(ckpt_path)
         logger.info(f"Saved checkpoint to {ckpt_path}. Evaluating...")
+        torch.cuda.empty_cache()
 
         data_path = self.trainer.datamodule.data_path
         if self.retriever is None:
             acc = evaluate(
                 data_path=data_path,
-                num_cpus=self.eval_num_cpus,
+                num_workers=self.eval_num_workers,
+                num_gpus=self.eval_num_gpus,
                 num_theorems=self.eval_num_theorems,
                 ckpt_path=ckpt_path,
             )
@@ -265,7 +270,8 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             )
             acc = evaluate(
                 data_path=data_path,
-                num_cpus=self.eval_num_cpus,
+                num_workers=self.eval_num_workers,
+                num_gpus=self.eval_num_gpus,
                 num_theorems=self.eval_num_theorems,
                 ckpt_path=ckpt_path,
                 indexed_corpus_path=corpus_path,
@@ -472,7 +478,7 @@ class GPT4TacticGenerator(TacticGenerator):
         openai.organization = organization
         openai.api_key = api_key
         self.model = model
-        self.default_prompt = "You are an expert in Lean3 theorem proofs. We are trying to solve the Lean3 theorem 'THEOREM_FULL_NAME' from the mathlib file 'FILE_PATH'. The current tactic state is: 'TACTIC_STATE'. Suggest exactly NUM_SAMPLES unique tactics to progress in solving 'THEOREM_FULL_NAME', along with their confidence levels as a float between 0 and 1. Rank them in order of effectiveness. Present the tactics and their confidence levels as comma-separated tuples in this format: #(tactic_{1}, confidence_{1})#, #(tactic_{2}, confidence_{2})#, ..., #(tactic_{NUM_SAMPLES}, confidence_{NUM_SAMPLES})#."
+        self.default_prompt = "You are an expert in theorem proving in Lean. We are trying to solve the Lean theorem 'THEOREM_FULL_NAME' from the mathlib file 'FILE_PATH'. The current tactic state is: 'TACTIC_STATE'. Suggest exactly NUM_SAMPLES unique tactics to progress in solving 'THEOREM_FULL_NAME', along with their confidence levels as a float between 0 and 1. Rank them in order of effectiveness. Present the tactics and their confidence levels as comma-separated tuples in this format: #(tactic_{1}, confidence_{1})#, #(tactic_{2}, confidence_{2})#, ..., #(tactic_{NUM_SAMPLES}, confidence_{NUM_SAMPLES})#."
         self.max_tokens = max_tokens
         self.num_retries = num_retries
         self.threshold = threshold

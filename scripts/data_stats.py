@@ -1,4 +1,5 @@
 """Scripts for computing some simple statistics about the data."""
+
 import json
 import argparse
 import numpy as np
@@ -13,7 +14,7 @@ from common import Corpus
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-path", type=Path, default="data/leandojo_benchmark/")
+    parser.add_argument("--data-path", type=Path, default="data/leandojo_benchmark_4/")
     args = parser.parse_args()
     logger.info(args)
 

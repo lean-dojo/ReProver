@@ -1,5 +1,6 @@
 """Proof search using best-first search.
 """
+
 import os
 import sys
 import ray
@@ -118,8 +119,8 @@ class BestFirstSearchProver:
                 with torch.no_grad():
                     try:
                         self._best_first_search()
-                    except DojoCrashError:
-                        logger.warning(f"Dojo crashed when proving {thm}")
+                    except DojoCrashError as ex:
+                        logger.warning(f"Dojo crashed with {ex} when proving {thm}")
                         pass
 
             if self.root.status == Status.PROVED:
@@ -409,8 +410,8 @@ class DistributedProver:
         indexed_corpus_path: Optional[str],
         tactic: Optional[str],
         module: Optional[str],
-        num_cpus: int,
-        with_gpus: bool,
+        num_workers: int,
+        num_gpus: bool,
         vllm_args: Optional[dict[str, Any]],
         timeout: int,
         num_sampled_tactics: int,
@@ -420,7 +421,7 @@ class DistributedProver:
             assert tactic and not indexed_corpus_path
         else:
             assert not tactic and not module
-        self.distributed = num_cpus > 1
+        self.distributed = num_workers > 1
 
         if not self.distributed:
             if vllm_args:
@@ -436,7 +437,7 @@ class DistributedProver:
             elif ckpt_path is None:
                 tac_gen = FixedTacticGenerator(tactic, module)
             else:
-                device = torch.device("cuda") if with_gpus else torch.device("cpu")
+                device = torch.device("cuda") if num_gpus > 0 else torch.device("cpu")
                 tac_gen = RetrievalAugmentedGenerator.load(
                     ckpt_path, device=device, freeze=True
                 )
@@ -448,11 +449,11 @@ class DistributedProver:
             )
             return
 
-        ray.init()
-        if with_gpus:
-            logger.info(f"Launching {num_cpus} GPU workers.")
+        if num_gpus >= 1:
+            logger.info(f"Launching {num_workers} workers with {num_gpus} GPUs.")
+            num_gpus_per_worker = num_gpus / num_workers
             provers = [
-                GpuProver.remote(
+                GpuProver.options(num_gpus=num_gpus_per_worker).remote(
                     ckpt_path,
                     indexed_corpus_path,
                     tactic,
@@ -461,10 +462,10 @@ class DistributedProver:
                     num_sampled_tactics=num_sampled_tactics,
                     debug=debug,
                 )
-                for _ in range(num_cpus)
+                for _ in range(num_workers)
             ]
         else:
-            logger.info(f"Launching {num_cpus} CPU workers.")
+            logger.info(f"Launching {num_workers} CPU workers.")
             provers = [
                 CpuProver.remote(
                     ckpt_path,
@@ -476,7 +477,7 @@ class DistributedProver:
                     num_sampled_tactics=num_sampled_tactics,
                     debug=debug,
                 )
-                for _ in range(num_cpus)
+                for _ in range(num_workers)
             ]
 
         self.prover_pool = ActorPool(provers)

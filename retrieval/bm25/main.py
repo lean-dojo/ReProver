@@ -1,4 +1,5 @@
 """Script for training the BM25 premise retriever."""
+
 import os
 import ray
 import json

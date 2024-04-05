@@ -146,7 +146,7 @@ class File:
     """Path of the ``*.lean`` file.
     """
 
-    premises: List[Premise]
+    premises: List[Premise] = field(repr=False, compare=False)
     """A list of premises defined in this file.
     """
 

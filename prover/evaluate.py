@@ -1,5 +1,6 @@
 """Script for evaluating the prover on theorems extracted by LeanDojo.
 """
+
 import os
 import uuid
 import json
@@ -99,8 +100,8 @@ def evaluate(
     num_sampled_tactics: int = 64,
     vllm_args: Optional[dict[str, Any]] = None,
     timeout: int = 600,
-    num_cpus: int = 1,
-    with_gpus: bool = False,
+    num_workers: int = 1,
+    num_gpus: int = 0,
     verbose: bool = False,
     progress_dir: Optional[str] = None,
 ) -> float:
@@ -131,9 +132,9 @@ def evaluate(
         indexed_corpus_path,
         tactic,
         module,
-        num_cpus,
+        num_workers,
+        num_gpus,
         vllm_args=vllm_args,
-        with_gpus=with_gpus,
         timeout=timeout,
         num_sampled_tactics=num_sampled_tactics,
         debug=verbose,
@@ -216,10 +217,10 @@ def main() -> None:
         help="Maximum number of seconds the proof search can take.",
     )
     parser.add_argument(
-        "--num-cpus", type=int, default=1, help="The number of concurrent provers."
+        "--num-workers", type=int, default=1, help="The number of concurrent provers."
     )
     parser.add_argument(
-        "--with-gpus", action="store_true", help="Use GPUs for proof search."
+        "--num-gpus", type=int, default=0, help="The number of GPUs for proof search."
     )
     parser.add_argument(
         "--verbose", action="store_true", help="Set the logging level to DEBUG."
@@ -237,6 +238,8 @@ def main() -> None:
         vllm_args = json.load(open(args.vllm_args_json_path))
     else:
         vllm_args = None
+    assert args.num_gpus <= args.num_workers
+
     logger.info(f"PID: {os.getpid()}")
     logger.info(args)
 
@@ -255,8 +258,8 @@ def main() -> None:
         num_sampled_tactics = args.num_sampled_tactics,
         vllm_args = vllm_args,
         timeout = args.timeout,
-        num_cpus = args.num_cpus,
-        with_gpus = args.with_gpus,
+        num_workers = args.num_workers,
+        num_gpus = args.num_gpus,
         verbose = args.verbose,
         progress_dir = args.progress_dir,
     )

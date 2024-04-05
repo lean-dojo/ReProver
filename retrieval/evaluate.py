@@ -1,4 +1,5 @@
 """Script for evaluating the premise retriever."""
+
 import os
 import json
 import pickle

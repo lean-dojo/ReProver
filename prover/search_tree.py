@@ -1,5 +1,6 @@
 """Definitions of the search tree used by the prover.
 """
+
 import math
 from enum import Enum
 from lean_dojo import (

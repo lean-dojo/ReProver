@@ -1,4 +1,5 @@
 """Ligihtning module for the premise retriever."""
+
 import os
 import math
 import torch

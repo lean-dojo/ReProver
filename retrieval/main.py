@@ -1,5 +1,6 @@
 """Script for training the premise retriever.
 """
+
 import os
 from loguru import logger
 from pytorch_lightning.cli import LightningCLI
