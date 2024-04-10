@@ -66,12 +66,11 @@ def _get_theorems_from_files(
         repo = LeanGitRepo(t["url"], t["commit"])
         theorems.append(Theorem(repo, t["file_path"], t["full_name"]))
         positions.append(Pos(*t["start"]))
-    theorems = sorted(
-        theorems,
-        key=lambda t: hashlib.md5(
-            (str(t.file_path) + ":" + t.full_name).encode()
-        ).hexdigest(),
-    )
+    # jointly sort theorems and positions
+    theorems_and_positions = list(zip(theorems, positions))
+    theorems_and_positions.sort(key=lambda x: hashlib.md5(f"{x[0].file_path}:{x[0].full_name}".encode()).hexdigest())
+    theorems, positions = zip(*theorems_and_positions)
+    theorems, positions = list(theorems), list(positions)
     if num_theorems is not None:
         theorems = theorems[:num_theorems]
         positions = positions[:num_theorems]
