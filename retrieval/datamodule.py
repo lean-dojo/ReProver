@@ -232,16 +232,15 @@ class RetrievalDataModule(pl.LightningDataModule):
         pass
 
     def setup(self, stage: Optional[str] = None) -> None:
-        if stage in (None, "fit"):
-            self.ds_train = RetrievalDataset(
-                [os.path.join(self.data_path, "train.json")],
-                self.corpus,
-                self.num_negatives,
-                self.num_in_file_negatives,
-                self.max_seq_len,
-                self.tokenizer,
-                is_train=True,
-            )
+        self.ds_train = RetrievalDataset(
+            [os.path.join(self.data_path, "train.json")],
+            self.corpus,
+            self.num_negatives,
+            self.num_in_file_negatives,
+            self.max_seq_len,
+            self.tokenizer,
+            is_train=True,
+        )
 
         if stage in (None, "fit", "validate"):
             self.ds_val = RetrievalDataset(

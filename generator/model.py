@@ -1,5 +1,6 @@
 """Lightning module for the tactic generator."""
 
+import os
 import torch
 import openai
 import pickle
@@ -243,7 +244,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
 
         from prover.evaluate import evaluate  # Avoid circular import.
 
-        ckpt_path = f"{self.trainer.log_dir}/checkpoints/last.ckpt"
+        ckpt_path = f"{self.trainer.log_dir}/checkpoints/last-tmp.ckpt"
         self.trainer.save_checkpoint(ckpt_path)
         logger.info(f"Saved checkpoint to {ckpt_path}. Evaluating...")
         torch.cuda.empty_cache()
@@ -277,6 +278,9 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
 
         self.log("Pass@1_val", acc, on_step=False, on_epoch=True, sync_dist=True)
         logger.info(f"Pass@1: {acc}")
+
+        if os.path.exists(ckpt_path):
+            os.remove(ckpt_path)
 
     ##############
     # Prediction #
