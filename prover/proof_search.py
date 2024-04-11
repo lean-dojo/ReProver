@@ -180,10 +180,12 @@ class BestFirstSearchProver:
 
         # Try all tactics in order of descending logprob, and collect the results. Any
         # new nodes are added to `self.nodes`, and edges are added to the result node.
-        results = [
-            self._run_tactic(search_node, tactic, logprob)
-            for tactic, logprob in suggestions
-        ]
+        results = []
+        for tactic, logprob in suggestions:
+            edge, finished = self._run_tactic(search_node, tactic, logprob)
+            results.append(edge)
+            if finished:
+                break
 
         # Store the fixed out edges of this node, marking it as explored.
         # This will trigger recursively recomputing tree statistics.
@@ -220,7 +222,9 @@ class BestFirstSearchProver:
         logger.debug(f"Tactic suggestions: {suggestions}")
         return suggestions
 
-    def _run_tactic(self, node: InternalNode, tactic: str, logprob: float) -> Edge:
+    def _run_tactic(
+        self, node: InternalNode, tactic: str, logprob: float
+    ) -> Tuple[Edge, bool]:
         t0 = time.monotonic()
         response = self.dojo.run_tac(node.state, tactic)
 
@@ -260,7 +264,7 @@ class BestFirstSearchProver:
         if isinstance(result_node, InternalNode):
             result_node.in_edges.append(edge)
 
-        return edge
+        return edge, isinstance(response, ProofFinished)
 
     #########
     # DEBUG #
