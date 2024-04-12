@@ -2,6 +2,7 @@
 
 import os
 import torch
+import shutil
 import openai
 import pickle
 from lean_dojo import Pos
@@ -280,7 +281,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         logger.info(f"Pass@1: {acc}")
 
         if os.path.exists(ckpt_path):
-            os.remove(ckpt_path)
+            shutil.rmtree(ckpt_path)
 
     ##############
     # Prediction #
