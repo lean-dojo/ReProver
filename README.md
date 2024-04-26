@@ -80,13 +80,13 @@ for tac in tactic_candidates:
 ```
 
 The expected output is shown below. `<a>` and `</a>` are markers of premises in generated tactics. You should remove them when using the tactics.
-```
-rw [<a>Nat.gcd_comm</a>, <a>Nat.gcd_eq_left</a>]
+```lean
+rw [<a>Nat.gcd_comm</a>]
 
 rw [<a>Nat.gcd_comm</a>]
-rw [<a>Nat.gcd_comm</a>, <a>Nat.gcd_eq_left</a>]
-rw [<a>Nat.gcd_comm</a>, <a>Nat.gcd_self_right</a>]
-simp [<a>Nat.gcd_comm</a>]
+rw [<a>Nat.gcd_comm</a>, <a>Nat.gcd_1</a>]
+rw [<a>Nat.gcd_comm</a>, <a>Nat.gcd_rec</a>]
+rw [<a>Nat.gcd_comm</a>, <a>Nat.gcd_gcd_self_left_right</a>]
 ```
 
 
@@ -144,7 +144,7 @@ for p in retrieve(state, premises, k=4):
 ```
 
 Expected output:
-```
+```lean
 def <a>Nat.gcd</a> : Nat → Nat → Nat
 | 0        y := y
 | (succ x) y := have y % succ x < succ x, from mod_lt _ $ succ_pos _,
