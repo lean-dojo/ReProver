@@ -319,7 +319,7 @@ python retrieval/index.py --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --corpus-path
 Then, run:
 ```bash
 python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/  --ckpt_path PATH_TO_REPROVER_CHECKPOINT --indexed-corpus-path PATH_TO_INDEXED_CORPUS --split test --num-cpus 8 --with-gpus
-# Do it separately two data splits.
+# Do it separately for two data splits.
 ```
 
 
