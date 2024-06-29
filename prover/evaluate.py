@@ -68,6 +68,7 @@ def _get_theorems_from_files(
         positions.append(Pos(*t["start"]))
 
     # Jointly sort theorems and positions
+    assert len(theorems) > 0
     theorems_and_positions = list(zip(theorems, positions))
     theorems_and_positions.sort(
         key=lambda x: hashlib.md5(
