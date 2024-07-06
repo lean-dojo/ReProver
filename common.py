@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from pytorch_lightning.utilities.deepspeed import (
     convert_zero_checkpoint_to_fp32_state_dict,
 )
-from transformers import get_cosine_schedule_with_warmup
 from deepspeed.ops.adam import FusedAdam, DeepSpeedCPUAdam
 from typing import Optional, List, Dict, Any, Tuple, Generator
 from pytorch_lightning.strategies.deepspeed import DeepSpeedStrategy
@@ -413,45 +412,22 @@ def format_augmented_state(
 
 
 def get_optimizers(
-    parameters, trainer: pl.Trainer, lr: float, warmup_steps: int
-) -> Dict[str, Any]:
+    parameters, trainer: pl.Trainer, lr: float) -> Dict[str, Any]:
     """Return an AdamW optimizer with cosine warmup learning rate schedule."""
     strategy = trainer.strategy
 
     if isinstance(strategy, DeepSpeedStrategy):
         if "offload_optimizer" in strategy.config["zero_optimization"]:
             logger.info("Optimizing with DeepSpeedCPUAdam")
-            optimizer = DeepSpeedCPUAdam(parameters, lr=lr, adamw_mode=True)
+            return DeepSpeedCPUAdam(parameters, lr=lr, adamw_mode=True)
         else:
             logger.info("Optimizing with FusedAdam")
-            optimizer = FusedAdam(parameters, lr=lr, adam_w_mode=True)
+            return FusedAdam(parameters, lr=lr, adam_w_mode=True)
     else:
         logger.info("Optimizing with AdamW")
-        optimizer = torch.optim.AdamW(parameters, lr=lr)
+        return torch.optim.AdamW(parameters, lr=lr)
 
-    if trainer.max_steps != -1:
-        max_steps = trainer.max_steps
-    else:
-        assert trainer.max_epochs is not None
-        max_steps = (
-            trainer.max_epochs
-            * len(trainer.datamodule.train_dataloader())
-            // trainer.accumulate_grad_batches
-        )
-
-    scheduler = get_cosine_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=warmup_steps,
-        num_training_steps=max_steps,
-    )
-
-    return {
-        "optimizer": optimizer,
-        "lr_scheduler": {
-            "scheduler": scheduler,
-            "interval": "step",
-        },
-    }
+    
 
 
 def _is_deepspeed_checkpoint(path: str):

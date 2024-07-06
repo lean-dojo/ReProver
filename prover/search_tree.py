@@ -13,7 +13,7 @@ from lean_dojo import (
 from abc import ABC, abstractmethod
 from functools import total_ordering
 from dataclasses import dataclass, field
-from typing import Optional, List, Tuple, Iterable, Union
+from typing import Optional, List, Iterable, Union
 
 
 class Status(Enum):

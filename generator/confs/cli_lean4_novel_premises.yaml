@@ -9,6 +9,11 @@ trainer:
       stage: 2
       offload_optimizer: false
       cpu_checkpointing: false
+  logger:
+    class_path: pytorch_lightning.loggers.WandbLogger
+    init_args:
+      project: ReProver
+      name: generator_novel_premises
   gradient_clip_val: 1.0
   max_steps: 500000
   check_val_every_n_epoch: 1

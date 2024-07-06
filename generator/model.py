@@ -5,6 +5,7 @@ import torch
 import shutil
 import openai
 import pickle
+from vllm import LLM
 from lean_dojo import Pos
 from loguru import logger
 import pytorch_lightning as pl
@@ -164,9 +165,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         return loss
 
     def configure_optimizers(self) -> Dict[str, Any]:
-        return get_optimizers(
-            self.parameters(), self.trainer, self.lr, self.warmup_steps
-        )
+        return get_optimizers(self.parameters(), self.trainer, self.lr)
 
     def _log_io_texts(
         self,
@@ -174,18 +173,22 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         state_ids: torch.LongTensor,
         tactic_ids: torch.LongTensor,
     ) -> None:
-        tb = self.logger.experiment
         inp = self.tokenizer.decode(state_ids[0], skip_special_tokens=True)
         oup_ids = torch.where(
             tactic_ids[0] == -100, self.tokenizer.pad_token_id, tactic_ids[0]
         )
         oup = self.tokenizer.decode(oup_ids, skip_special_tokens=True)
-        tb.add_text(f"{split}_state", f"```\n{inp}\n```", self.global_step)
-        tb.add_text(f"{split}_tactic", f"`{oup}`", self.global_step)
+        self.logger.log_text(
+            f"{split}_samples",
+            ["state", "tactic"],
+            [[inp, oup]],
+            step=self.global_step,
+        )
 
     def on_fit_start(self) -> None:
         if self.logger is not None:
             self.logger.log_hyperparams(self.hparams)
+            self.logger.watch(self.generator)
             assert self.trainer is not None
             logger.info(f"Logging to {self.trainer.log_dir}")
 
@@ -223,9 +226,8 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             for i in range(batch_size)
         ]
 
-        tb = self.logger.experiment
         msg = "\n".join(tactics_pred[0])
-        tb.add_text(f"preds_val", f"```\n{msg}\n```", self.global_step)
+        self.logger.log_text("preds_val", ["tactics"], [[msg]], step=self.global_step)
 
         # Log the topk accuracies.
         for k in range(1, self.num_beams + 1):
@@ -524,3 +526,36 @@ class FixedTacticGenerator(TacticGenerator):
             self.generate(s, f, tfn, tp, num_samples)
             for s, f, tfn, tp in zip(state, file_path, theorem_full_name, theorem_pos)
         ]
+
+
+class SyncVllmGenerator(TacticGenerator):
+    def __init__(self, model_path: str, num_gpus: int) -> None:
+        self.llm = LLM(model_path, tensor_parallel_size=num_gpus)
+
+    @abstractmethod
+    def generate(
+        self,
+        state: str,
+        file_path: str,
+        theorem_full_name: str,
+        theorem_pos: Pos,
+        num_samples: int,
+    ) -> List[Tuple[str, float]]:
+        import pdb
+
+        pdb.set_trace()
+        raise NotImplementedError
+
+    @abstractmethod
+    def batch_generate(
+        self,
+        state: List[str],
+        file_path: List[str],
+        theorem_full_name: List[str],
+        theorem_pos: List[Pos],
+        num_samples: int,
+    ) -> List[List[Tuple[str, float]]]:
+        import pdb
+
+        pdb.set_trace()
+        raise NotImplementedError

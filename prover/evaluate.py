@@ -105,6 +105,7 @@ def evaluate(
     timeout: int = 600,
     num_workers: int = 1,
     num_gpus: int = 0,
+    save_results: bool = False,
     verbose: bool = False,
 ) -> float:
     set_logger(verbose)
@@ -149,9 +150,10 @@ def evaluate(
     # Save the results.
     if exp_id is None:
         exp_id = str(uuid.uuid4())
-    pickle_path = f"{exp_id}_results.pickle"
-    pickle.dump(results, open(pickle_path, "wb"))
-    logger.info(f"Results saved to {pickle_path}")
+    if save_results:
+        pickle_path = f"{exp_id}_results.pickle"
+        pickle.dump(results, open(pickle_path, "wb"))
+        logger.info(f"Results saved to {pickle_path}")
 
     return pass_1
 
@@ -208,6 +210,7 @@ def main() -> None:
     parser.add_argument(
         "--num-gpus", type=int, default=0, help="The number of GPUs for proof search."
     )
+    parser.add_argument("--save-results", action="store_true")
     parser.add_argument(
         "--verbose", action="store_true", help="Set the logging level to DEBUG."
     )
@@ -235,6 +238,7 @@ def main() -> None:
         args.timeout,
         args.num_workers,
         args.num_gpus,
+        args.save_results,
         args.verbose,
     )
 

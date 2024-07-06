@@ -234,15 +234,23 @@ Check out [Lean Copilot](https://github.com/lean-dojo/LeanCopilot) if you want t
 1. Download and install [Miniconda Python 3](https://docs.conda.io/en/latest/miniconda.html) (Anaconda should also work).
 2. Create the conda environment and install Python dependencies:
 ```bash
-conda create --yes --name ReProver python=3.10 ipython numpy
+conda create --yes --name ReProver python=3.11 ipython
 conda activate ReProver
-pip install torch --index-url https://download.pytorch.org/whl/cu121  # Depending on your CUDA version; see https://pytorch.org/.
-pip install tqdm loguru deepspeed "pytorch-lightning[extra]" transformers tensorboard openai rank_bm25 lean-dojo
+pip install torch  # Depending on your CUDA version; see https://pytorch.org/.
+pip install tqdm loguru deepspeed "pytorch-lightning[extra]" transformers wandb openai rank_bm25 lean-dojo vllm
+pip install git+https://github.com/pytorch/torchtune
 ```
 3. Prepend the repo's root to the `PYTHONPATH` environment variable.
 4. Make sure `wget` and `tar` are available. Then, run `python scripts/download_data.py` to download [LeanDojo Benchmark 4](https://zenodo.org/doi/10.5281/zenodo.8040109). They will be saved to `./data`.
 5. Satisfy the requirements of [LeanDojo](https://github.com/lean-dojo/LeanDojo#requirements).
 6. Use [LeanDojo](https://github.com/lean-dojo/LeanDojo) to trace all repos in the datasets: `python scripts/trace_repos.py`. This step may take some time. Please refer to [LeanDojo's documentation](https://leandojo.readthedocs.io/en/latest/) if you encounter any issues.
+7. Log in Weights & Biases and set its log directory.
+```bash
+wandb login
+export WANDB_DIR=$(pwd)/tmp
+mkdir -p tmp/wandb
+mkdir logs
+```
 
 
 ## Premise Selection

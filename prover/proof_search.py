@@ -1,7 +1,6 @@
 """Proof search using best-first search.
 """
 
-import os
 import sys
 import ray
 import time
@@ -390,6 +389,7 @@ class DistributedProver:
         self.distributed = num_workers > 1
 
         if not self.distributed:
+            assert num_gpus <= 1
             if ckpt_path is None:
                 tac_gen = FixedTacticGenerator(tactic, module)
             else:
