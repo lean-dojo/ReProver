@@ -97,6 +97,7 @@ def evaluate(
     full_name: Optional[str] = None,
     name_filter: Optional[str] = None,
     num_theorems: Optional[int] = None,
+    use_vllm: bool = False,
     ckpt_path: Optional[str] = None,
     indexed_corpus_path: Optional[str] = None,
     tactic: Optional[str] = None,
@@ -116,6 +117,7 @@ def evaluate(
 
     # Search for proofs using multiple concurrent provers.
     prover = DistributedProver(
+        use_vllm,
         ckpt_path,
         indexed_corpus_path,
         tactic,
@@ -180,6 +182,7 @@ def main() -> None:
     parser.add_argument("--full-name", type=str)
     parser.add_argument("--name-filter", type=str)
     parser.add_argument("--num-theorems", type=int)
+    parser.add_argument("--use-vllm", action="store_true")
     parser.add_argument(
         "--ckpt_path",
         type=str,
@@ -230,6 +233,7 @@ def main() -> None:
         args.full_name,
         args.name_filter,
         args.num_theorems,
+        args.use_vllm,
         args.ckpt_path,
         args.indexed_corpus_path,
         args.tactic,

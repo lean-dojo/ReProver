@@ -24,10 +24,16 @@ from loguru import logger
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 from ray.util.actor_pool import ActorPool
+from vllm import LLM, SamplingParams, RequestOutput
 
 from common import zip_strict
 from prover.search_tree import *
-from generator.model import RetrievalAugmentedGenerator, FixedTacticGenerator
+from generator.model import (
+    TacticGenerator,
+    RetrievalAugmentedGenerator,
+    FixedTacticGenerator,
+    VllmGenerator,
+)
 
 
 @dataclass(frozen=True)
@@ -300,29 +306,16 @@ class BestFirstSearchProver:
 
 
 @ray.remote
-class CpuProver(BestFirstSearchProver):
-    """Ray actor for running an instance of `BestFirstSearchProver` on a CPU."""
+class ProverActor(BestFirstSearchProver):
+    """Ray actor for running an instance of `BestFirstSearchProver`."""
 
     def __init__(
         self,
-        ckpt_path: Optional[str],
-        indexed_corpus_path: Optional[str],
-        tactic: Optional[str],
-        module: Optional[str],
+        tac_gen: TacticGenerator,
         timeout: int,
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
-        if ckpt_path is None:
-            tac_gen = FixedTacticGenerator(tactic, module)
-        else:
-            tac_gen = RetrievalAugmentedGenerator.load(
-                ckpt_path, device=torch.device("cpu"), freeze=True
-            )
-            if tac_gen.retriever is not None:
-                if indexed_corpus_path is not None:
-                    tac_gen.retriever.load_corpus(indexed_corpus_path)
-                tac_gen.retriever.reindex_corpus(batch_size=32)
         super().__init__(
             tac_gen,
             timeout,
@@ -331,47 +324,41 @@ class CpuProver(BestFirstSearchProver):
         )
 
 
-@ray.remote(num_gpus=1)
-class GpuProver(BestFirstSearchProver):
-    """Ray actor for running an instance of `BestFirstSearchProver` on a GPU."""
+@ray.remote
+class VllmActor:
+    """Ray actor for running an instance of `vllm.LLM`, which is shared by all `ProverActor` instances."""
 
-    def __init__(
-        self,
-        ckpt_path: Optional[str],
-        indexed_corpus_path: Optional[str],
-        tactic: Optional[str],
-        module: Optional[str],
-        timeout: int,
-        num_sampled_tactics: int,
-        debug: bool,
-    ) -> None:
-        if ckpt_path is None:
-            tac_gen = FixedTacticGenerator(tactic, module)
-        else:
-            tac_gen = RetrievalAugmentedGenerator.load(
-                ckpt_path, device=torch.device("cuda"), freeze=True
-            )
-            if tac_gen.retriever is not None:
-                if indexed_corpus_path is not None:
-                    tac_gen.retriever.load_corpus(indexed_corpus_path)
-                tac_gen.retriever.reindex_corpus(batch_size=32)
-        super().__init__(
-            tac_gen,
-            timeout,
-            num_sampled_tactics,
-            debug,
+    def __init__(self, model_path: str) -> None:
+        self.num_gpus = len(ray.get_gpu_ids())
+        self.model_path = model_path
+        
+    def initialize(self) -> None:
+        logger.info("Initializing vLLM")
+        # TODO: Try `--enable-prefix-caching` and other parameters in https://docs.vllm.ai/en/stable/models/engine_args.html#engine-args.
+        self.llm = LLM(self.model_path, tensor_parallel_size=self.num_gpus)
+
+    def generate(
+        self, inputs: Union[str, List[str]], num_samples: int
+    ) -> List[RequestOutput]:
+        sampling_params = SamplingParams(
+            n=num_samples, temperature=0, use_beam_search=True, early_stopping=False
         )
+        outputs = self.llm.generate(inputs, sampling_params, use_tqdm=False)
+        if isinstance(inputs, str):
+            assert len(outputs) == 1
+        return outputs
 
 
 class DistributedProver:
     """A distributed prover that uses Ray to parallelize the proof search.
 
-    It is a wrapper around `CpuProver` and `GpuProver` that handles the different
+    It is a wrapper around `ProverActor` that handles the different
     devices and different number of concurrent provers.
     """
 
     def __init__(
         self,
+        use_vllm: bool,
         ckpt_path: Optional[str],
         indexed_corpus_path: Optional[str],
         tactic: Optional[str],
@@ -386,20 +373,26 @@ class DistributedProver:
             assert tactic and not indexed_corpus_path
         else:
             assert not tactic and not module
-        self.distributed = num_workers > 1
 
+        if ckpt_path is None:
+            tac_gen = FixedTacticGenerator(tactic, module)
+        elif use_vllm:
+            assert indexed_corpus_path is None
+            vllm_actor = VllmActor.options(num_gpus=num_gpus).remote(ckpt_path)
+            ray.get(vllm_actor.initialize.remote())
+            tac_gen = VllmGenerator(vllm_actor)
+        else:
+            device = torch.device("cuda") if num_gpus > 0 else torch.device("cpu")
+            tac_gen = RetrievalAugmentedGenerator.load(
+                ckpt_path, device=device, freeze=True
+            )
+            if tac_gen.retriever is not None:
+                assert indexed_corpus_path is not None
+                tac_gen.retriever.load_corpus(indexed_corpus_path)
+
+        self.distributed = num_workers > 1
         if not self.distributed:
             assert num_gpus <= 1
-            if ckpt_path is None:
-                tac_gen = FixedTacticGenerator(tactic, module)
-            else:
-                device = torch.device("cuda") if num_gpus > 0 else torch.device("cpu")
-                tac_gen = RetrievalAugmentedGenerator.load(
-                    ckpt_path, device=device, freeze=True
-                )
-                if tac_gen.retriever is not None:
-                    assert indexed_corpus_path is not None
-                    tac_gen.retriever.load_corpus(indexed_corpus_path)
             self.prover = BestFirstSearchProver(
                 tac_gen, timeout, num_sampled_tactics, debug
             )
@@ -407,13 +400,14 @@ class DistributedProver:
 
         if num_gpus >= 1:
             logger.info(f"Launching {num_workers} workers with {num_gpus} GPUs.")
-            num_gpus_per_worker = num_gpus / num_workers
+            if use_vllm:
+                # GPUs are managed by `VllmActor`.
+                num_gpus_per_worker = 0
+            else:
+                num_gpus_per_worker = num_gpus / num_workers
             provers = [
-                GpuProver.options(num_gpus=num_gpus_per_worker).remote(
-                    ckpt_path,
-                    indexed_corpus_path,
-                    tactic,
-                    module,
+                ProverActor.options(num_gpus=num_gpus_per_worker).remote(
+                    tac_gen,
                     timeout=timeout,
                     num_sampled_tactics=num_sampled_tactics,
                     debug=debug,
@@ -423,11 +417,8 @@ class DistributedProver:
         else:
             logger.info(f"Launching {num_workers} CPU workers.")
             provers = [
-                CpuProver.remote(
-                    ckpt_path,
-                    indexed_corpus_path,
-                    tactic,
-                    module,
+                ProverActor.remote(
+                    tac_gen,
                     timeout=timeout,
                     num_sampled_tactics=num_sampled_tactics,
                     debug=debug,

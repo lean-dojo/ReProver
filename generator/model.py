@@ -1,16 +1,18 @@
 """Lightning module for the tactic generator."""
 
 import os
+import ray
+import math
 import torch
 import shutil
 import openai
 import pickle
-from vllm import LLM
 from lean_dojo import Pos
 from loguru import logger
 import pytorch_lightning as pl
 from torchmetrics import Metric
 from abc import ABC, abstractmethod
+from vllm import SamplingParams
 from typing import List, Dict, Any, Optional, Tuple
 from transformers import T5ForConditionalGeneration, AutoTokenizer
 
@@ -247,7 +249,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
 
         from prover.evaluate import evaluate  # Avoid circular import.
 
-        ckpt_path = f"{self.trainer.log_dir}/checkpoints/last-tmp.ckpt"
+        ckpt_path = f"{self.trainer.log_dir}/last-tmp.ckpt"
         self.trainer.save_checkpoint(ckpt_path)
         logger.info(f"Saved checkpoint to {ckpt_path}. Evaluating...")
         torch.cuda.empty_cache()
@@ -528,11 +530,10 @@ class FixedTacticGenerator(TacticGenerator):
         ]
 
 
-class SyncVllmGenerator(TacticGenerator):
-    def __init__(self, model_path: str, num_gpus: int) -> None:
-        self.llm = LLM(model_path, tensor_parallel_size=num_gpus)
+class VllmGenerator(TacticGenerator):
+    def __init__(self, vllm_actor) -> None:
+        self.vllm_actor = vllm_actor
 
-    @abstractmethod
     def generate(
         self,
         state: str,
@@ -541,12 +542,16 @@ class SyncVllmGenerator(TacticGenerator):
         theorem_pos: Pos,
         num_samples: int,
     ) -> List[Tuple[str, float]]:
-        import pdb
+        outputs = ray.get(
+            self.vllm_actor.generate.remote(
+                f"### State:\n{state}\n\n### Tactic:", num_samples
+            )
+        )
+        return [
+            (remove_marks(x.text), math.exp(x.cumulative_logprob))
+            for x in outputs[0].outputs
+        ]
 
-        pdb.set_trace()
-        raise NotImplementedError
-
-    @abstractmethod
     def batch_generate(
         self,
         state: List[str],
@@ -555,7 +560,12 @@ class SyncVllmGenerator(TacticGenerator):
         theorem_pos: List[Pos],
         num_samples: int,
     ) -> List[List[Tuple[str, float]]]:
-        import pdb
-
-        pdb.set_trace()
-        raise NotImplementedError
+        inputs = [f"### State:\n{s}\n\n### Tactic:" for s in state]
+        outputs = ray.get(self.vllm_actor.generate.remote(inputs, num_samples))
+        return [
+            [
+                (remove_marks(x.text), math.exp(x.cumulative_logprob))
+                for x in oup.outputs
+            ]
+            for oup in outputs
+        ]
