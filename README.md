@@ -290,8 +290,10 @@ Similar to premise selection, you can run `python generator/main.py --help` and 
 
 To train tactic generators without retrieval:
 ```bash
-python generator/main.py fit --config generator/confs/cli_lean4_random.yaml             # LeanDojo Benchmark 4, `random` split
-python generator/main.py fit --config generator/confs/cli_lean4_novel_premises.yaml     # LeanDojo Benchmark 4, `novel_premises` split
+python generator/main.py fit --config generator/confs/cli_lean4_random.yaml               # LeanDojo Benchmark 4, `random` split, T5 generator
+python generator/main.py fit --config generator/confs/cli_lean4_novel_premises.yaml       # LeanDojo Benchmark 4, `novel_premises` split, T5 generator
+python generator/main.py fit --config generator/confs/decoder_only/gemma_2b_random.yaml  # LeanDojo Benchmark 4, `random` split, gemma generator
+python generator/main.py fit --config generator/confs/decoder_only/llama3_8b_random.yaml  # LeanDojo Benchmark 4, `random` split, Llama generator
 ```
 
 To train models augmented by retrieval, we need to provide a retriever checkpoint and its predictions on all proof states in the dataset:

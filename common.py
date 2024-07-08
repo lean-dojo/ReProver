@@ -503,3 +503,34 @@ def cpu_checkpointing_enabled(pl_module) -> bool:
         )
     except RuntimeError:
         return False
+
+def format_inputs_decoder(examples: List[Example]) -> List:
+    """Format the inputs for decoder-only models."""
+    
+    return [f'[GOAL]\n{ex["state"]}\n[PROOFSTEP]\n{ex["tactic"]}' 
+            for ex in examples]
+    
+
+def extract_inputs_decoder(inputs, ex_type: str):
+    """Extract certain entity from the inputs of decoder-only models."""
+    
+    if ex_type.lower() == 'condition':  # Remove the proofstep part from the input
+        return [f'{input_str.split("[PROOFSTEP]")[0].strip()}\n[PROOFSTEP]\n' 
+                if "[PROOFSTEP]\n" in input_str else input_str
+                for input_str in inputs]
+
+    if ex_type.lower() == 'condition_with_states':  # Add the artifact for state str
+        return [f'[GOAL]\n{input_str}\n[PROOFSTEP]\n' 
+                for input_str in inputs]
+        
+    if ex_type.lower() == 'tactic':  # Extract the tactic part from the input
+        return [f'{input_str.split("[PROOFSTEP]")[1].strip()}' 
+                if "[PROOFSTEP]\n" in input_str 
+                else ''
+                for input_str in inputs]
+    
+    if ex_type.lower() == 'state':  # Extract the state part from the input
+        return [f'{input_str.split("[PROOFSTEP]")[0].replace("[GOAL]", "").strip()}' 
+                if "[PROOFSTEP]\n" in input_str 
+                else input_str.replace("[GOAL]", "").strip()
+                for input_str in inputs]

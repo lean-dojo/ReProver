@@ -12,6 +12,8 @@ from torchmetrics import Metric
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, Tuple
 from transformers import T5ForConditionalGeneration, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoModelForSeq2SeqLM
+
 
 from common import (
     zip_strict,
@@ -20,6 +22,8 @@ from common import (
     get_optimizers,
     load_checkpoint,
     format_augmented_state,
+    format_inputs_decoder,
+    extract_inputs_decoder,
 )
 from retrieval.model import PremiseRetriever
 
@@ -57,7 +61,7 @@ class TacticGenerator(ABC):
     @abstractmethod
     def generate(
         self,
-        state: str,
+        inputs: str,
         file_path: str,
         theorem_full_name: str,
         theorem_pos: Pos,
@@ -68,7 +72,7 @@ class TacticGenerator(ABC):
     @abstractmethod
     def batch_generate(
         self,
-        state: List[str],
+        inputs: List[str],
         file_path: List[str],
         theorem_full_name: List[str],
         theorem_pos: List[Pos],
@@ -92,9 +96,11 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         max_oup_seq_len: int,
         length_penalty: float = 0.0,
         ret_ckpt_path: Optional[str] = None,
+        decoder_only: bool = False,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
+        self.model_name = model_name
         self.lr = lr
         self.warmup_steps = warmup_steps
         self.num_beams = num_beams
@@ -105,6 +111,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         self.eval_num_theorems = eval_num_theorems
         self.max_inp_seq_len = max_inp_seq_len
         self.max_oup_seq_len = max_oup_seq_len
+        self.decoder_only = decoder_only
 
         if ret_ckpt_path is None:
             logger.info("Without retrieval")
@@ -115,8 +122,29 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
                 ret_ckpt_path, self.device, freeze=True
             )
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.generator = T5ForConditionalGeneration.from_pretrained(model_name)
+        # Set the generator
+        if self.decoder_only:
+            # Load general decoder-only models
+            self.generator = AutoModelForCausalLM.from_pretrained(self.model_name)
+        else:
+            # Load t5 specifically
+            if 't5' in self.model_name.lower():
+                self.generator = T5ForConditionalGeneration.from_pretrained(self.model_name)
+            # Load as general seq2seq models
+            else:
+                self.generator = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
+
+        # Set the tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+            self.generator.config.pad_token_id = self.tokenizer.eos_token_id
+        
+        if self.decoder_only:
+            self.tokenizer.truncation_side = "left"
+            self.tokenizer.padding_side = "left"
 
         self.topk_accuracies = dict()
         for k in range(1, num_beams + 1):
@@ -132,25 +160,33 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
 
     def forward(
         self,
-        state_ids: torch.Tensor,
-        state_mask: torch.Tensor,
-        tactic_ids: torch.Tensor,
+        input_ids: torch.Tensor,
+        input_mask: torch.Tensor,
+        output_ids: torch.Tensor,
     ) -> torch.Tensor:
+        if self.decoder_only:
+            labels = input_ids  # CausalLM will handle label shift internally
+        else:
+            labels = output_ids
+            
         return self.generator(
-            input_ids=state_ids,
-            attention_mask=state_mask,
-            labels=tactic_ids,
+            input_ids=input_ids,
+            attention_mask=input_mask,
+            labels=labels,
         ).loss
+
 
     ############
     # Training #
     ############
 
     def training_step(self, batch, batch_idx: int):
+        output_ids = batch["output_ids"] if not self.decoder_only else None
+        
         loss = self(
-            batch["state_ids"],
-            batch["state_mask"],
-            batch["tactic_ids"],
+            batch["input_ids"],
+            batch["input_mask"],
+            output_ids,
         )
         self.log(
             "loss_train",
@@ -160,7 +196,7 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             sync_dist=True,
             batch_size=len(batch),
         )
-        self._log_io_texts("train", batch["state_ids"], batch["tactic_ids"])
+        self._log_io_texts("train", batch["input_ids"], output_ids)
         return loss
 
     def configure_optimizers(self) -> Dict[str, Any]:
@@ -171,17 +207,19 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
     def _log_io_texts(
         self,
         split: str,
-        state_ids: torch.LongTensor,
-        tactic_ids: torch.LongTensor,
+        input_ids: torch.LongTensor,
+        output_ids: Optional[torch.LongTensor] = None,
     ) -> None:
         tb = self.logger.experiment
-        inp = self.tokenizer.decode(state_ids[0], skip_special_tokens=True)
-        oup_ids = torch.where(
-            tactic_ids[0] == -100, self.tokenizer.pad_token_id, tactic_ids[0]
-        )
-        oup = self.tokenizer.decode(oup_ids, skip_special_tokens=True)
-        tb.add_text(f"{split}_state", f"```\n{inp}\n```", self.global_step)
-        tb.add_text(f"{split}_tactic", f"`{oup}`", self.global_step)
+        inp = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
+        tb.add_text(f"{split}_input", f"```\n{inp}\n```", self.global_step)
+        
+        if not self.decoder_only:
+            oup_ids = torch.where(
+                output_ids[0] == -100, self.tokenizer.pad_token_id, output_ids[0]
+            )
+            oup = self.tokenizer.decode(oup_ids, skip_special_tokens=True)
+            tb.add_text(f"{split}_output", f"`{oup}`", self.global_step)
 
     def on_fit_start(self) -> None:
         if self.logger is not None:
@@ -197,31 +235,67 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
     ##############
 
     def validation_step(self, batch: Dict[str, Any], _) -> None:
-        state_ids = batch["state_ids"]
-        state_mask = batch["state_mask"]
-        tactic_ids = batch["tactic_ids"]
+        """Get the validation loss, and the accuracy in generated outputs."""
+        input_ids = batch["input_ids"]
+        input_mask = batch["input_mask"]
+        output_ids = batch["output_ids"] if not self.decoder_only else None
 
-        loss = self(state_ids, state_mask, tactic_ids)
+        # Validation for loss
+        loss = self(input_ids, input_mask, output_ids)
         self.log(f"loss_val", loss, on_step=False, on_epoch=True, sync_dist=True)
-        self._log_io_texts("val", state_ids, tactic_ids)
+        self._log_io_texts("val", input_ids, output_ids)
+        
+        # Validation for accuracy
+        if self.decoder_only:
+            # Format the inputs to get the conditional input (everything before proofstep)
+            inputs = extract_inputs_decoder(batch["inputs"], ex_type='condition')
+            tokenized_inputs = self.tokenizer(
+                inputs,
+                padding="longest",
+                max_length=self.max_inp_seq_len,
+                truncation=True,
+                return_tensors="pt",
+            )
+            input_ids = tokenized_inputs.input_ids.to(self.device)
+            input_mask = tokenized_inputs.attention_mask.to(self.device)
+            
+            # Set the max_length for generation to include the input and output lengths
+            max_length = self.max_inp_seq_len + self.max_oup_seq_len
+        else:
+            max_length = self.max_oup_seq_len      
 
         # Generate topk tactic candidates via Beam Search.
         output = self.generator.generate(
-            input_ids=state_ids,
-            attention_mask=state_mask,
-            max_length=self.max_oup_seq_len,
+            input_ids=input_ids,
+            attention_mask=input_mask,
+            max_length=max_length,
             num_beams=self.num_beams,
             do_sample=False,
             num_return_sequences=self.num_beams,
             early_stopping=False,
         )
         output_text = self.tokenizer.batch_decode(output, skip_special_tokens=True)
-        batch_size = state_ids.size(0)
+        batch_size = input_ids.size(0)
         assert len(output_text) == batch_size * self.num_beams
+
+        # Extract true tactics and predicted tactics for comparison
+        if self.decoder_only:
+            # Extract only the tactic part from the inputs for decoder-only models
+            tactics_true = extract_inputs_decoder(batch["inputs"], ex_type='tactic')
+        else:
+            tactics_true = batch["outputs"]
+        
         tactics_pred = [
             output_text[i * self.num_beams : (i + 1) * self.num_beams]
             for i in range(batch_size)
         ]
+
+        # If decoder-only, extract the tactic part from predicted outputs
+        if self.decoder_only:
+            tactics_pred = [
+                extract_inputs_decoder(tactic_preds, ex_type='tactic')
+                for tactic_preds in tactics_pred
+            ]
 
         tb = self.logger.experiment
         msg = "\n".join(tactics_pred[0])
@@ -230,12 +304,12 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         # Log the topk accuracies.
         for k in range(1, self.num_beams + 1):
             topk_acc = self.topk_accuracies[k]
-            topk_acc(tactics_pred, batch["tactic"])
+            topk_acc(tactics_pred, tactics_true)
             self.log(
                 f"top{k}_acc_val",
                 topk_acc,
-                on_step=False,
-                on_epoch=True,
+                on_step=False, 
+                on_epoch=True, 
                 sync_dist=True,
             )
 
@@ -289,53 +363,74 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
 
     def generate(
         self,
-        state: str,
+        inputs: str,
         file_path: str,
         theorem_full_name: str,
         theorem_pos: Pos,
         num_samples: int,
     ) -> List[Tuple[str, float]]:
         return self.batch_generate(
-            [state], [file_path], [theorem_full_name], [theorem_pos], num_samples
+            inputs=[inputs], 
+            file_path=[file_path], 
+            theorem_full_name=[theorem_full_name], 
+            theorem_pos=[theorem_pos], 
+            num_samples=num_samples,
         )[0]
 
     def batch_generate(
         self,
-        state: List[str],
+        inputs: List[str],  # tactic states
         file_path: List[str],
         theorem_full_name: List[str],
         theorem_pos: List[Pos],
         num_samples: int,
     ) -> List[List[Tuple[str, float]]]:
-        logger.debug(state)
+        logger.debug(inputs)
+        
         if self.retriever is not None:
+            if self.decoder_only:  # Extract the states
+                inputs = extract_inputs_decoder(inputs, ex_type='state')
+                
             retrieved_premises, _ = self.retriever.retrieve(
-                state,
+                inputs,
                 file_path,
                 theorem_full_name,
                 theorem_pos,
                 self.eval_num_retrieved,
             )
-            state = [
+            inputs = [
                 format_augmented_state(s, premises, self.max_inp_seq_len, p_drop=0.0)
-                for s, premises in zip_strict(state, retrieved_premises)
+                for s, premises in zip_strict(inputs, retrieved_premises)
             ]
+            
+            if self.decoder_only:  # Add back the condition
+                inputs = extract_inputs_decoder(inputs, ex_type='condition_with_states')
+            
+        else:
+            if self.decoder_only:  # Truncate the inputs
+                inputs = extract_inputs_decoder(inputs, ex_type='condition')
 
-        tokenized_state = self.tokenizer(
-            state,
+        tokenized_inputs = self.tokenizer(
+            inputs,
             padding="longest",
             max_length=self.max_inp_seq_len,
             truncation=True,
             return_tensors="pt",
         )
-        state_ids = tokenized_state.input_ids.to(self.device)
-        state_mask = tokenized_state.attention_mask.to(self.device)
+        input_ids = tokenized_inputs.input_ids.to(self.device)
+        input_mask = tokenized_inputs.attention_mask.to(self.device)
+
+        # Handle the max output length
+        if not self.decoder_only:
+            max_length = self.max_oup_seq_len
+        else: 
+            max_length = self.max_inp_seq_len + self.max_oup_seq_len
 
         # Generate tactic candidates using beam search.
         output = self.generator.generate(
-            input_ids=state_ids,
-            attention_mask=state_mask,
-            max_length=self.max_oup_seq_len,
+            input_ids=input_ids,
+            attention_mask=input_mask,
+            max_length=max_length,
             num_beams=num_samples,
             length_penalty=self.length_penalty,
             do_sample=False,
@@ -345,14 +440,31 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             return_dict_in_generate=True,
         )
 
-        # Return the output.
+        # Get the default output text and scores
         raw_output_text = self.tokenizer.batch_decode(
             output.sequences, skip_special_tokens=True
         )
         raw_scores = output.sequences_scores.tolist()
-        tactics_with_scores = []
+        
+        # Handle the case for decoder-only models
+        if self.decoder_only:
+            # Get the raw_output_text with only generated tactics
+            raw_output_text = [
+                output_str.split("[PROOFSTEP]\n", 1)[-1].strip() 
+                if "[PROOFSTEP]\n" in output_str else ''
+                for output_str in raw_output_text
+            ]
+            # Get the probs with only generated tactics
+            probs = torch.stack(output.scores, dim=1).softmax(-1)
+            gen_seqs = output.sequences[:, input_ids.size(1):]
+            gen_probs = torch.gather(probs, 2, gen_seqs[:, :, None]).squeeze(-1)
+            eos_mask = gen_seqs != self.tokenizer.eos_token_id
+            raw_scores = (gen_probs * eos_mask).sum(-1).tolist()
+        
+        # Generate the outputs with scores (only tactics are retained in outputs)
+        outputs_with_scores = []
 
-        for i in range(len(state)):
+        for i in range(len(inputs)):
             output_text = []
             output_score = []
 
@@ -362,9 +474,9 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
                     output_text.append(t)
                     output_score.append(raw_scores[j])
 
-            tactics_with_scores.append(list(zip_strict(output_text, output_score)))
+            outputs_with_scores.append(list(zip_strict(output_text, output_score)))
 
-        return tactics_with_scores
+        return outputs_with_scores
 
 
 class GPT4TacticGenerator(TacticGenerator):

@@ -13,6 +13,7 @@ class CLI(LightningCLI):
         parser.link_arguments("model.model_name", "data.model_name")
         parser.link_arguments("data.max_inp_seq_len", "model.max_inp_seq_len")
         parser.link_arguments("data.max_oup_seq_len", "model.max_oup_seq_len")
+        parser.link_arguments("data.decoder_only", "model.decoder_only")
 
 
 def main() -> None:
