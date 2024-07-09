@@ -4,6 +4,7 @@
 import sys
 import ray
 import time
+import uuid
 import heapq
 import torch
 from lean_dojo import (
@@ -24,7 +25,7 @@ from loguru import logger
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 from ray.util.actor_pool import ActorPool
-from vllm import LLM, SamplingParams, RequestOutput
+from vllm import LLM, AsyncLLMEngine, AsyncEngineArgs, SamplingParams, RequestOutput
 
 from common import zip_strict
 from prover.search_tree import *
@@ -337,9 +338,7 @@ class VllmActor:
         # TODO: Try `--enable-prefix-caching` and other parameters in https://docs.vllm.ai/en/stable/models/engine_args.html#engine-args.
         self.llm = LLM(self.model_path, tensor_parallel_size=self.num_gpus)
 
-    def generate(
-        self, inputs: Union[str, List[str]], num_samples: int
-    ) -> List[RequestOutput]:
+    def generate(self, prompt: str, num_samples: int) -> RequestOutput:
         sampling_params = SamplingParams(
             n=num_samples,
             temperature=0,
@@ -347,10 +346,41 @@ class VllmActor:
             use_beam_search=True,
             early_stopping=False,
         )
-        outputs = self.llm.generate(inputs, sampling_params, use_tqdm=False)
-        if isinstance(inputs, str):
-            assert len(outputs) == 1
-        return outputs
+        outputs = self.llm.generate(prompt, sampling_params, use_tqdm=False)
+        assert len(outputs) == 1
+        return outputs[0]
+
+
+@ray.remote
+class AsyncVllmActor:
+    """Ray actor for running an instance of `vllm.AsyncLLMEngine`, which is shared by all `ProverActor` instances."""
+
+    def __init__(self, model_path: str) -> None:
+        self.num_gpus = len(ray.get_gpu_ids())
+        self.model_path = model_path
+
+    def initialize(self) -> None:
+        logger.info("Initializing vLLM")
+        # TODO: Try `--enable-prefix-caching` and other parameters in https://docs.vllm.ai/en/stable/models/engine_args.html#engine-args.
+        engine_args = AsyncEngineArgs(
+            model=self.model_path, tensor_parallel_size=self.num_gpus
+        )
+        self.engine = AsyncLLMEngine.from_engine_args(engine_args)
+
+    async def generate(self, prompt: str, num_samples: int) -> RequestOutput:
+        sampling_params = SamplingParams(
+            n=num_samples,
+            temperature=0,
+            length_penalty=0,
+            use_beam_search=True,
+            early_stopping=False,
+        )
+
+        async for oup in self.engine.generate(
+            prompt, sampling_params, request_id=str(uuid.uuid4().hex)
+        ):
+            final_output = oup
+        return final_output
 
 
 class DistributedProver:
@@ -382,7 +412,7 @@ class DistributedProver:
             tac_gen = FixedTacticGenerator(tactic, module)
         elif use_vllm:
             assert indexed_corpus_path is None
-            vllm_actor = VllmActor.options(num_gpus=num_gpus).remote(ckpt_path)
+            vllm_actor = AsyncVllmActor.options(num_gpus=num_gpus).remote(ckpt_path)
             ray.get(vllm_actor.initialize.remote())
             tac_gen = VllmGenerator(vllm_actor)
         else:

@@ -335,21 +335,18 @@ class PremiseRetriever(pl.LightningModule):
 
     def retrieve(
         self,
-        state: List[str],
-        file_name: List[str],
-        theorem_full_name: List[str],
-        theorem_pos: List[Pos],
+        state: str,
+        file_name: str,
+        theorem_full_name: str,
+        theorem_pos: Pos,
         k: int,
     ) -> Tuple[List[Premise], List[float]]:
         """Retrieve ``k`` premises from ``corpus`` using ``state`` and ``tactic_prefix`` as context."""
         self.reindex_corpus(batch_size=32)
 
-        ctx = [
-            Context(*_)
-            for _ in zip_strict(file_name, theorem_full_name, theorem_pos, state)
-        ]
+        ctx = Context(file_name, theorem_full_name, theorem_pos, state)
         ctx_tokens = self.tokenizer(
-            [_.serialize() for _ in ctx],
+            [ctx.serialize()],
             padding="longest",
             max_length=self.max_seq_len,
             truncation=True,
@@ -371,4 +368,5 @@ class PremiseRetriever(pl.LightningModule):
             context_emb,
             k,
         )
-        return retrieved_premises, scores
+        assert len(retrieved_premises) == len(scores) == 1
+        return retrieved_premises[0], scores[0]

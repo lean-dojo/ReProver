@@ -67,17 +67,6 @@ class TacticGenerator(ABC):
     ) -> List[Tuple[str, float]]:
         raise NotImplementedError
 
-    @abstractmethod
-    def batch_generate(
-        self,
-        state: List[str],
-        file_path: List[str],
-        theorem_full_name: List[str],
-        theorem_pos: List[Pos],
-        num_samples: int,
-    ) -> List[List[Tuple[str, float]]]:
-        raise NotImplementedError
-
 
 class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
     def __init__(
@@ -300,18 +289,6 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         theorem_pos: Pos,
         num_samples: int,
     ) -> List[Tuple[str, float]]:
-        return self.batch_generate(
-            [state], [file_path], [theorem_full_name], [theorem_pos], num_samples
-        )[0]
-
-    def batch_generate(
-        self,
-        state: List[str],
-        file_path: List[str],
-        theorem_full_name: List[str],
-        theorem_pos: List[Pos],
-        num_samples: int,
-    ) -> List[List[Tuple[str, float]]]:
         logger.debug(state)
         if self.retriever is not None:
             retrieved_premises, _ = self.retriever.retrieve(
@@ -321,13 +298,10 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
                 theorem_pos,
                 self.eval_num_retrieved,
             )
-            state = [
-                format_augmented_state(s, premises, self.max_inp_seq_len, p_drop=0.0)
-                for s, premises in zip_strict(state, retrieved_premises)
-            ]
+            state = format_augmented_state(state, retrieved_premises, self.max_inp_seq_len, p_drop=0.0)
 
         tokenized_state = self.tokenizer(
-            state,
+            [state],
             padding="longest",
             max_length=self.max_inp_seq_len,
             truncation=True,
@@ -355,21 +329,17 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
             output.sequences, skip_special_tokens=True
         )
         raw_scores = output.sequences_scores.tolist()
-        tactics_with_scores = []
 
-        for i in range(len(state)):
-            output_text = []
-            output_score = []
+        output_text = []
+        output_score = []
 
-            for j in range(i * num_samples, (i + 1) * num_samples):
-                t = remove_marks(raw_output_text[j])
-                if t not in output_text:
-                    output_text.append(t)
-                    output_score.append(raw_scores[j])
+        for j in range(i * num_samples, (i + 1) * num_samples):
+            t = remove_marks(raw_output_text[j])
+            if t not in output_text:
+                output_text.append(t)
+                output_score.append(raw_scores[j])
 
-            tactics_with_scores.append(list(zip_strict(output_text, output_score)))
-
-        return tactics_with_scores
+        return list(zip_strict(output_text, output_score))
 
 
 class GPT4TacticGenerator(TacticGenerator):
@@ -486,21 +456,6 @@ class GPT4TacticGenerator(TacticGenerator):
 
         raise ValueError("GPT-4 outputs are unparsable.")
 
-    def batch_generate(
-        self,
-        state: List[str],
-        file_path: List[str],
-        theorem_full_name: List[str],
-        theorem_pos: List[Pos],
-        num_samples: int,
-    ) -> List[List[Tuple[str, float]]]:
-        return [
-            self.generate(s, f, t, p, num_samples)
-            for s, f, t, p in zip_strict(
-                state, file_path, theorem_full_name, theorem_pos
-            )
-        ]
-
 
 class FixedTacticGenerator(TacticGenerator):
     def __init__(self, tactic, module) -> None:
@@ -516,19 +471,6 @@ class FixedTacticGenerator(TacticGenerator):
         num_samples: int,
     ) -> List[Tuple[str, float]]:
         return [(f"{{ {self.tactic} }}", 1.0)]
-
-    def batch_generate(
-        self,
-        state: List[str],
-        file_path: List[str],
-        theorem_full_name: List[str],
-        theorem_pos: List[Pos],
-        num_samples: int,
-    ) -> List[List[Tuple[str, float]]]:
-        return [
-            self.generate(s, f, tfn, tp, num_samples)
-            for s, f, tfn, tp in zip(state, file_path, theorem_full_name, theorem_pos)
-        ]
 
 
 class VllmGenerator(TacticGenerator):
@@ -546,25 +488,8 @@ class VllmGenerator(TacticGenerator):
         # prompt = StateTacticPairTemplate.format({"state": state})
         # prompt = f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n[GOAL]\n{state}\n[PROOFSTEP]\n<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
         prompt = f"[GOAL]\n{state}\n[PROOFSTEP]\n"
-        outputs = ray.get(self.vllm_actor.generate.remote(prompt, num_samples))
+        response = ray.get(self.vllm_actor.generate.remote(prompt, num_samples))
         return [
             (remove_marks(x.text).strip(), x.cumulative_logprob)
-            for x in outputs[0].outputs
-        ]
-
-    def batch_generate(
-        self,
-        state: List[str],
-        file_path: List[str],
-        theorem_full_name: List[str],
-        theorem_pos: List[Pos],
-        num_samples: int,
-    ) -> List[List[Tuple[str, float]]]:
-        # prompts = [StateTacticPairTemplate.format({"state": s}) for s in state]
-        # prompts = [f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n[GOAL]\n{s}\n[PROOFSTEP]\n<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n" for s in state]
-        prompts = [f"[GOAL]\n{s}\n[PROOFSTEP]\n" for s in state]
-        outputs = ray.get(self.vllm_actor.generate.remote(prompts, num_samples))
-        return [
-            [(remove_marks(x.text).strip(), x.cumulative_logprob) for x in oup.outputs]
-            for oup in outputs
+            for x in response.outputs
         ]
