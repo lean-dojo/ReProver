@@ -49,18 +49,19 @@ checkpointer:
     model-00004-of-00004.safetensors,
   ]
   recipe_checkpoint: null
-  output_dir: ./models/Meta-Llama-3-8B-finetuned/
+  output_dir: ./models/Meta-Llama-3-8B-finetuned-lr2e-5/
   model_type: LLAMA3
 resume_from_checkpoint: False
 
 # Fine-tuning arguments
 batch_size: 4
-epochs: 1
+epochs: 5
 
 optimizer:
   _component_: torch.optim.AdamW
   lr: 2e-5
   foreach: False
+warmup_steps: 2000
 
 loss:
   _component_: torch.nn.CrossEntropyLoss
@@ -83,6 +84,6 @@ metric_logger:
   _component_: torchtune.utils.metric_logging.WandBLogger
   project: ReProver
   log_dir: ${output_dir}
-output_dir: ./logs/leandojo-llama3-finetune
+output_dir: ./logs/Meta-Llama-3-8B-finetuned-lr2e-5/
 log_every_n_steps: 1
 log_peak_memory_stats: false

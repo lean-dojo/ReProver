@@ -3,8 +3,7 @@ from typing import Mapping, Any, Optional, Dict
 
 
 class StateTacticPairTemplate(InstructTemplate):
-    template = "### State:\n{state}\n\n### Tactic:"
-    # template = "[GOAL]\n{state}\n[PROOFSTEP]\n"
+    template = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n[GOAL]\n{state}\n<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n[PROOFSTEP]\n"
 
     @classmethod
     def format(

@@ -331,7 +331,7 @@ class VllmActor:
     def __init__(self, model_path: str) -> None:
         self.num_gpus = len(ray.get_gpu_ids())
         self.model_path = model_path
-        
+
     def initialize(self) -> None:
         logger.info("Initializing vLLM")
         # TODO: Try `--enable-prefix-caching` and other parameters in https://docs.vllm.ai/en/stable/models/engine_args.html#engine-args.
@@ -341,7 +341,11 @@ class VllmActor:
         self, inputs: Union[str, List[str]], num_samples: int
     ) -> List[RequestOutput]:
         sampling_params = SamplingParams(
-            n=num_samples, temperature=0, use_beam_search=True, early_stopping=False
+            n=num_samples,
+            temperature=0,
+            length_penalty=0,
+            use_beam_search=True,
+            early_stopping=False,
         )
         outputs = self.llm.generate(inputs, sampling_params, use_tqdm=False)
         if isinstance(inputs, str):

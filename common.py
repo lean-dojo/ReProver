@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pytorch_lightning.utilities.deepspeed import (
     convert_zero_checkpoint_to_fp32_state_dict,
 )
+from transformers import get_constant_schedule_with_warmup
 from deepspeed.ops.adam import FusedAdam, DeepSpeedCPUAdam
 from typing import Optional, List, Dict, Any, Tuple, Generator
 from pytorch_lightning.strategies.deepspeed import DeepSpeedStrategy
@@ -353,18 +354,8 @@ def get_all_pos_premises(annot_tac, corpus: Corpus) -> List[Premise]:
     return list(all_pos_premises)
 
 
-_SPACES_REGEX = re.compile(r"\s+", re.DOTALL)
-
-
-def normalize_spaces(s: str) -> str:
-    """Repalce any consecutive block of whitespace characters in ``s`` with a single whitespace."""
-    return _SPACES_REGEX.sub(" ", s).strip()
-
-
-def format_tactic(annot_tac: str, provenances, normalize: bool) -> str:
+def format_tactic(annot_tac: str, provenances) -> str:
     """Use full names for the all <a>...</a>."""
-    if normalize:
-        annot_tac = normalize_spaces(annot_tac)
     if len(provenances) == 0:
         return annot_tac
 
@@ -412,22 +403,30 @@ def format_augmented_state(
 
 
 def get_optimizers(
-    parameters, trainer: pl.Trainer, lr: float) -> Dict[str, Any]:
+    parameters, trainer: pl.Trainer, lr: float, warmup_steps: int
+) -> Dict[str, Any]:
     """Return an AdamW optimizer with cosine warmup learning rate schedule."""
     strategy = trainer.strategy
 
     if isinstance(strategy, DeepSpeedStrategy):
         if "offload_optimizer" in strategy.config["zero_optimization"]:
             logger.info("Optimizing with DeepSpeedCPUAdam")
-            return DeepSpeedCPUAdam(parameters, lr=lr, adamw_mode=True)
+            optimizer = DeepSpeedCPUAdam(parameters, lr=lr, adamw_mode=True)
         else:
             logger.info("Optimizing with FusedAdam")
-            return FusedAdam(parameters, lr=lr, adam_w_mode=True)
+            optimizer = FusedAdam(parameters, lr=lr, adam_w_mode=True)
     else:
         logger.info("Optimizing with AdamW")
-        return torch.optim.AdamW(parameters, lr=lr)
+        optimizer = torch.optim.AdamW(parameters, lr=lr)
 
-    
+    scheduler = get_constant_schedule_with_warmup(optimizer, warmup_steps)
+    return {
+        "optimizer": optimizer,
+        "lr_scheduler": {
+            "scheduler": scheduler,
+            "interval": "step",
+        },
+    }
 
 
 def _is_deepspeed_checkpoint(path: str):
@@ -438,14 +437,13 @@ def _is_deepspeed_checkpoint(path: str):
 
 def load_checkpoint(model_cls, ckpt_path: str, device, freeze: bool):
     """Handle DeepSpeed checkpoints in model loading."""
-    if not _is_deepspeed_checkpoint(ckpt_path):
-        model = model_cls.load_from_checkpoint(ckpt_path, strict=False).to(device)
-    else:
+    if _is_deepspeed_checkpoint(ckpt_path):
         with tempfile.TemporaryDirectory() as dirname:
             path = os.path.join(dirname, "lightning.cpkt")
             convert_zero_checkpoint_to_fp32_state_dict(ckpt_path, path)
-            model = model_cls.load_from_checkpoint(path, strict=False)
-            model = model.to(device)
+            model = model_cls.load_from_checkpoint(path, strict=False).to(device)
+    else:  # PyTorch Ligthning checkpoints
+        model = model_cls.load_from_checkpoint(ckpt_path, strict=False).to(device)
     if freeze:
         model.freeze()
     return model

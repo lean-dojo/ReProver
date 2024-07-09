@@ -24,6 +24,8 @@ from torch.distributed.fsdp import (
     StateDictType,
 )
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
+from transformers import get_constant_schedule_with_warmup
 from torch.utils.data import DataLoader, DistributedSampler
 
 from torchtune import config, modules, utils
@@ -226,6 +228,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                 ckpt_dict[utils.OPT_KEY] if self._resume_from_checkpoint else None
             ),
         )
+        self._scheduler = get_constant_schedule_with_warmup(
+            self._optimizer, cfg.warmup_steps
+        )
 
         self._loss_fn = config.instantiate(cfg.loss)
 
@@ -374,6 +379,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
         if self._is_rank_zero:
             log.info("Optimizer is initialized.")
+
         return optimizer
 
     def _setup_data(
@@ -534,6 +540,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                 if (idx + 1) % self._gradient_accumulation_steps == 0:
                     self._optimizer.step()
                     self._optimizer.zero_grad(set_to_none=True)
+                    self._scheduler.step()
 
                     # Update the number of steps when the weights are updated
                     self.global_step += 1

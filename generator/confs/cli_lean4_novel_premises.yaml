@@ -12,9 +12,8 @@ trainer:
   logger:
     class_path: pytorch_lightning.loggers.WandbLogger
     init_args:
-      project: ReProver
-      name: generator_novel_premises
-  gradient_clip_val: 1.0
+      name: null
+      save_dir: null
   max_steps: 500000
   check_val_every_n_epoch: 1
   num_sanity_val_steps: 0
@@ -51,12 +50,10 @@ model:
 data:
   data_path: data/leandojo_benchmark_4/novel_premises/
   corpus_path: data/leandojo_benchmark_4/corpus.jsonl
-  keep_marks: true
   preds_path: null
   batch_size: 8  # effective_batch_size == batch_size * accumulate_grad_batches * devices
   eval_batch_size: 64
   max_inp_seq_len: 2300
   max_oup_seq_len: 512
   p_drop: 0.5
-  normalize_tactics: true
   num_workers: 2

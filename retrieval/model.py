@@ -157,7 +157,7 @@ class PremiseRetriever(pl.LightningModule):
         self.embeddings_staled = True
 
     def configure_optimizers(self) -> Dict[str, Any]:
-        return get_optimizers(self.parameters(), self.trainer, self.lr)
+        return get_optimizers(self.parameters(), self.trainer, self.lr, self.warmup_steps)
 
     ##############
     # Validation #

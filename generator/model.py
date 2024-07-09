@@ -2,7 +2,6 @@
 
 import os
 import ray
-import math
 import torch
 import shutil
 import openai
@@ -12,7 +11,6 @@ from loguru import logger
 import pytorch_lightning as pl
 from torchmetrics import Metric
 from abc import ABC, abstractmethod
-from vllm import SamplingParams
 from typing import List, Dict, Any, Optional, Tuple
 from transformers import T5ForConditionalGeneration, AutoTokenizer
 
@@ -25,6 +23,7 @@ from common import (
     format_augmented_state,
 )
 from retrieval.model import PremiseRetriever
+from generator.template import StateTacticPairTemplate
 
 
 torch.set_float32_matmul_precision("medium")
@@ -167,7 +166,9 @@ class RetrievalAugmentedGenerator(TacticGenerator, pl.LightningModule):
         return loss
 
     def configure_optimizers(self) -> Dict[str, Any]:
-        return get_optimizers(self.parameters(), self.trainer, self.lr)
+        return get_optimizers(
+            self.parameters(), self.trainer, self.lr, self.warmup_steps
+        )
 
     def _log_io_texts(
         self,
@@ -542,13 +543,12 @@ class VllmGenerator(TacticGenerator):
         theorem_pos: Pos,
         num_samples: int,
     ) -> List[Tuple[str, float]]:
-        outputs = ray.get(
-            self.vllm_actor.generate.remote(
-                f"### State:\n{state}\n\n### Tactic:", num_samples
-            )
-        )
+        # prompt = StateTacticPairTemplate.format({"state": state})
+        # prompt = f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n[GOAL]\n{state}\n[PROOFSTEP]\n<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+        prompt = f"[GOAL]\n{state}\n[PROOFSTEP]\n"
+        outputs = ray.get(self.vllm_actor.generate.remote(prompt, num_samples))
         return [
-            (remove_marks(x.text), math.exp(x.cumulative_logprob))
+            (remove_marks(x.text).strip(), x.cumulative_logprob)
             for x in outputs[0].outputs
         ]
 
@@ -560,12 +560,11 @@ class VllmGenerator(TacticGenerator):
         theorem_pos: List[Pos],
         num_samples: int,
     ) -> List[List[Tuple[str, float]]]:
-        inputs = [f"### State:\n{s}\n\n### Tactic:" for s in state]
-        outputs = ray.get(self.vllm_actor.generate.remote(inputs, num_samples))
+        # prompts = [StateTacticPairTemplate.format({"state": s}) for s in state]
+        # prompts = [f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n[GOAL]\n{s}\n[PROOFSTEP]\n<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n" for s in state]
+        prompts = [f"[GOAL]\n{s}\n[PROOFSTEP]\n" for s in state]
+        outputs = ray.get(self.vllm_actor.generate.remote(prompts, num_samples))
         return [
-            [
-                (remove_marks(x.text), math.exp(x.cumulative_logprob))
-                for x in oup.outputs
-            ]
+            [(remove_marks(x.text).strip(), x.cumulative_logprob) for x in oup.outputs]
             for oup in outputs
         ]
