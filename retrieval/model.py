@@ -51,15 +51,11 @@ class PremiseRetriever(pl.LightningModule):
 
     @classmethod
     def load_hf(
-        cls, ckpt_path: str, device: int, dtype = None, max_seq_len: Optional[int] = None
+        cls, ckpt_path: str, device: int, dtype=None, max_seq_len: Optional[int] = None
     ) -> "PremiseRetriever":
         if max_seq_len is None:
             max_seq_len = 999999999999
-        model = (
-            PremiseRetriever(ckpt_path, 0.0, 0, max_seq_len, 100)
-            .to(device)
-            .eval()
-        )
+        model = PremiseRetriever(ckpt_path, 0.0, 0, max_seq_len, 100).to(device).eval()
         if dtype is not None:
             return model.to(dtype)
         elif (
@@ -373,7 +369,7 @@ class PremiseRetriever(pl.LightningModule):
 
         retrieved_premises, scores = self.corpus.get_nearest_premises(
             self.corpus_embeddings,
-            ctx,
+            [ctx],
             context_emb,
             k,
         )

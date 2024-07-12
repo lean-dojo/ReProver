@@ -355,11 +355,13 @@ def get_all_pos_premises(annot_tac, corpus: Corpus) -> List[Premise]:
 
 
 def format_augmented_state(
-    s: str, premises: List[Premise], max_len: int, p_drop: float
+    s: str, premises: List[Premise], max_len: Optional[int] = None, p_drop: float = 0.0
 ) -> str:
     """Format a state with retrieved premises and drop some of them with probability ``p_drop``."""
     aug_s = ""
     length = 0
+    if max_len is None:
+        max_len = 9999999999999999999999
     max_premises_len = max_len - len(bytes(s.encode("utf-8")))
 
     for p in premises:

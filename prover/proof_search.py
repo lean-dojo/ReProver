@@ -393,12 +393,21 @@ class DistributedProver:
             ray.get(vllm_actor.initialize.remote())
             tac_gen = VllmGenerator(vllm_actor)
         elif indexed_corpus_path is not None:
+            device = torch.device("cuda") if num_gpus > 0 else torch.device("cpu")
             tac_gen = RetrievalAugmentedGenerator(
-                gen_ckpt_path, ret_ckpt_path, indexed_corpus_path, device, max_num_retrieved=100
+                gen_ckpt_path,
+                ret_ckpt_path,
+                indexed_corpus_path,
+                device,
+                max_oup_seq_len,
+                length_penalty,
+                max_num_retrieved=100,
             )
         else:
             device = torch.device("cuda") if num_gpus > 0 else torch.device("cpu")
-            tac_gen = HuggingFaceGenerator(gen_ckpt_path, device, max_oup_seq_len, length_penalty)
+            tac_gen = HuggingFaceGenerator(
+                gen_ckpt_path, device, max_oup_seq_len, length_penalty
+            )
 
         self.distributed = num_workers > 1
         if not self.distributed:
