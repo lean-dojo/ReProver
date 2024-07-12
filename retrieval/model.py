@@ -9,7 +9,7 @@ from lean_dojo import Pos
 from loguru import logger
 import pytorch_lightning as pl
 import torch.nn.functional as F
-from typing import List, Dict, Any, Tuple, Union
+from typing import List, Dict, Any, Tuple, Union, Optional
 from transformers import AutoModelForTextEncoding, AutoTokenizer
 
 from common import (
@@ -51,10 +51,12 @@ class PremiseRetriever(pl.LightningModule):
 
     @classmethod
     def load_hf(
-        cls, ckpt_path: str, device, dtype, num_retrieved: int
+        cls, ckpt_path: str, device: int, dtype = None, max_seq_len: Optional[int] = None
     ) -> "PremiseRetriever":
+        if max_seq_len is None:
+            max_seq_len = 999999999999
         model = (
-            PremiseRetriever(ckpt_path, 0.0, 0, 999999999999, num_retrieved)
+            PremiseRetriever(ckpt_path, 0.0, 0, max_seq_len, 100)
             .to(device)
             .eval()
         )

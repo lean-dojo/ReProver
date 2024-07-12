@@ -30,7 +30,7 @@ def main() -> None:
         device = torch.device("cpu")
     else:
         device = torch.device("cuda")
-    model = PremiseRetriever.load_hf(args.ckpt_path, device, num_retrieved=100)
+    model = PremiseRetriever.load_hf(args.ckpt_path, device, max_seq_len=2048)
     model.load_corpus(args.corpus_path)
     model.reindex_corpus(batch_size=args.batch_size)
 
