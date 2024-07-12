@@ -1,7 +1,6 @@
 """Ligihtning module for the premise retriever."""
 
 import os
-import math
 import torch
 import pickle
 import numpy as np
@@ -11,7 +10,7 @@ from loguru import logger
 import pytorch_lightning as pl
 import torch.nn.functional as F
 from typing import List, Dict, Any, Tuple, Union
-from transformers import T5EncoderModel, AutoTokenizer
+from transformers import AutoModelForTextEncoding, AutoTokenizer
 
 from common import (
     Premise,
@@ -43,12 +42,32 @@ class PremiseRetriever(pl.LightningModule):
         self.num_retrieved = num_retrieved
         self.max_seq_len = max_seq_len
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.encoder = T5EncoderModel.from_pretrained(model_name)
+        self.encoder = AutoModelForTextEncoding.from_pretrained(model_name)
         self.embeddings_staled = True
 
     @classmethod
     def load(cls, ckpt_path: str, device, freeze: bool) -> "PremiseRetriever":
         return load_checkpoint(cls, ckpt_path, device, freeze)
+
+    @classmethod
+    def load_hf(
+        cls, ckpt_path: str, device, dtype, num_retrieved: int
+    ) -> "PremiseRetriever":
+        model = (
+            PremiseRetriever(ckpt_path, 0.0, 0, 999999999999, num_retrieved)
+            .to(device)
+            .eval()
+        )
+        if dtype is not None:
+            return model.to(dtype)
+        elif (
+            model.dtype == torch.float32
+            and torch.cuda.is_available()
+            and torch.cuda.get_device_capability()[0] >= 8
+        ):
+            return model.to(torch.bfloat16)
+        else:
+            return model
 
     def load_corpus(self, path_or_corpus: Union[str, Corpus]) -> None:
         """Associate the retriever with a corpus."""
@@ -131,6 +150,7 @@ class PremiseRetriever(pl.LightningModule):
     def on_fit_start(self) -> None:
         if self.logger is not None:
             self.logger.log_hyperparams(self.hparams)
+            self.logger.watch(self.encoder)
             logger.info(f"Logging to {self.trainer.log_dir}")
 
         self.corpus = self.trainer.datamodule.corpus
@@ -157,7 +177,9 @@ class PremiseRetriever(pl.LightningModule):
         self.embeddings_staled = True
 
     def configure_optimizers(self) -> Dict[str, Any]:
-        return get_optimizers(self.parameters(), self.trainer, self.lr, self.warmup_steps)
+        return get_optimizers(
+            self.parameters(), self.trainer, self.lr, self.warmup_steps
+        )
 
     ##############
     # Validation #
@@ -211,25 +233,10 @@ class PremiseRetriever(pl.LightningModule):
         recall = [[] for _ in range(self.num_retrieved)]
         MRR = []
         num_with_premises = 0
-        tb = self.logger.experiment
 
         for i, (all_pos_premises, premises) in enumerate(
             zip_strict(batch["all_pos_premises"], retrieved_premises)
         ):
-            # Only log the first example in the batch.
-            if i == 0:
-                msg_gt = "\n\n".join([p.serialize() for p in all_pos_premises])
-                msg_retrieved = "\n\n".join(
-                    [f"{j}. {p.serialize()}" for j, p in enumerate(premises)]
-                )
-                TP = len(set(premises).intersection(all_pos_premises))
-                if len(all_pos_premises) == 0:
-                    r = math.nan
-                else:
-                    r = float(TP) / len(all_pos_premises)
-                msg = f"Recall@{self.num_retrieved}: {r}\n\nGround truth:\n\n```\n{msg_gt}\n```\n\nRetrieved:\n\n```\n{msg_retrieved}\n```"
-                tb.add_text(f"premises_val", msg, self.global_step)
-
             all_pos_premises = set(all_pos_premises)
             if len(all_pos_premises) == 0:
                 continue

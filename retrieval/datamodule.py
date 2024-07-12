@@ -16,7 +16,7 @@ from transformers import AutoTokenizer
 from torch.utils.data import Dataset, DataLoader
 
 
-from common import Context, Corpus, Batch, Example, format_state, get_all_pos_premises
+from common import Context, Corpus, Batch, Example, get_all_pos_premises
 
 
 class RetrievalDataset(Dataset):
@@ -49,9 +49,8 @@ class RetrievalDataset(Dataset):
             file_path = thm["file_path"]
 
             for i, tac in enumerate(thm["traced_tactics"]):
-                state = format_state(tac["state_before"])
                 context = Context(
-                    file_path, thm["full_name"], Pos(*thm["start"]), state
+                    file_path, thm["full_name"], Pos(*thm["start"]), tac["state_before"]
                 )
                 all_pos_premises = get_all_pos_premises(
                     tac["annotated_tactic"], self.corpus

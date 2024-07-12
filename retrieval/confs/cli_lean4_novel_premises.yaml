@@ -12,9 +12,8 @@ trainer:
   logger:
     class_path: pytorch_lightning.loggers.WandbLogger
     init_args:
-      project: ReProver
-      name: retrieval_novel_premises
-      save_dir: ./wandb_logs/retrieval_novel_premises
+      name: null
+      save_dir: null
   gradient_clip_val: 1.0
   max_steps: 800000
   callbacks:

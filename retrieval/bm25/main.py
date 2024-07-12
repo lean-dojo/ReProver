@@ -18,7 +18,7 @@ from typing import List, Dict, Any
 from ray.util.actor_pool import ActorPool
 
 
-from common import Context, format_state, get_all_pos_premises
+from common import Context, get_all_pos_premises
 
 
 def _process_theorem(
@@ -40,8 +40,9 @@ def _process_theorem(
         )
 
     for i, tac in enumerate(thm["traced_tactics"]):
-        state = format_state(tac["state_before"])
-        ctx = Context(file_path, thm["full_name"], Pos(*thm["start"]), state)
+        ctx = Context(
+            file_path, thm["full_name"], Pos(*thm["start"]), tac["state_before"]
+        )
         tokenized_ctx = tokenizer.encode(ctx.serialize()).tokens
 
         scores = np.array(bm25.get_batch_scores(tokenized_ctx, accessible_premise_idxs))

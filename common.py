@@ -354,36 +354,10 @@ def get_all_pos_premises(annot_tac, corpus: Corpus) -> List[Premise]:
     return list(all_pos_premises)
 
 
-def format_tactic(annot_tac: str, provenances) -> str:
-    """Use full names for the all <a>...</a>."""
-    if len(provenances) == 0:
-        return annot_tac
-
-    tac = ""
-    marks = list(re.finditer(r"<a>(?P<ident>.+?)</a>", annot_tac))
-
-    for i, (m, prov) in enumerate(zip_strict(marks, provenances)):
-        last_end = marks[i - 1].end() if i > 0 else 0
-        tac += annot_tac[last_end : m.start()] + "<a>" + prov["full_name"] + "</a>"
-
-    tac += annot_tac[marks[-1].end() :]
-    return tac
-
-
-def format_state(s: str) -> str:
-    m = re.match(r"\d+ goals", s)
-    if m is not None:
-        return s[m.end() :].strip()
-    else:
-        return s
-
-
 def format_augmented_state(
     s: str, premises: List[Premise], max_len: int, p_drop: float
 ) -> str:
     """Format a state with retrieved premises and drop some of them with probability ``p_drop``."""
-    s = format_state(s)
-
     aug_s = ""
     length = 0
     max_premises_len = max_len - len(bytes(s.encode("utf-8")))

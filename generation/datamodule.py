@@ -14,9 +14,7 @@ from common import (
     Batch,
     Corpus,
     Example,
-    format_state,
     remove_marks,
-    format_tactic,
     format_augmented_state,
 )
 
@@ -54,7 +52,6 @@ class GeneratorDataset(Dataset):
                         "commit": thm["commit"],
                         "file_path": thm["file_path"],
                         "full_name": thm["full_name"],
-                        # "state": format_state(tac["state_before"]),
                         "state": tac["state_before"],
                         "tactic": tactic,
                     }

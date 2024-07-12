@@ -98,8 +98,11 @@ def evaluate(
     name_filter: Optional[str] = None,
     num_theorems: Optional[int] = None,
     use_vllm: bool = False,
-    ckpt_path: Optional[str] = None,
+    gen_ckpt_path: Optional[str] = None,
+    ret_ckpt_path: Optional[str] = None,
     indexed_corpus_path: Optional[str] = None,
+    max_oup_seq_len: int = 512,
+    length_penalty: float = 0.0,
     tactic: Optional[str] = None,
     module: Optional[str] = None,
     num_sampled_tactics: int = 64,
@@ -118,8 +121,11 @@ def evaluate(
     # Search for proofs using multiple concurrent provers.
     prover = DistributedProver(
         use_vllm,
-        ckpt_path,
+        gen_ckpt_path,
+        ret_ckpt_path,
         indexed_corpus_path,
+        max_oup_seq_len,
+        length_penalty,
         tactic,
         module,
         num_workers,
@@ -184,15 +190,22 @@ def main() -> None:
     parser.add_argument("--num-theorems", type=int)
     parser.add_argument("--use-vllm", action="store_true")
     parser.add_argument(
-        "--ckpt_path",
+        "--gen_ckpt_path",
         type=str,
         help="Checkpoint of the tactic generator.",
+    )
+    parser.add_argument(
+        "--ret_ckpt_path",
+        type=str,
+        help="Checkpoint of the premise retriever.",
     )
     parser.add_argument(
         "--indexed-corpus-path",
         type=str,
         help="Path to a pickled indexed corpus. Not required for models w/o retrieval.",
     )
+    parser.add_argument("--max-oup-seq-len", type=int, default=512)
+    parser.add_argument("--length-penalty", type=float, default=0.0)
     parser.add_argument("--tactic", type=str, help="The tactic to evaluate.")
     parser.add_argument("--module", type=str, help="The module to import the tactic.")
     parser.add_argument(
@@ -219,7 +232,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    assert args.ckpt_path or args.tactic
+    assert args.gen_ckpt_path or args.tactic
     assert args.num_gpus <= args.num_workers
 
     logger.info(f"PID: {os.getpid()}")
@@ -234,8 +247,11 @@ def main() -> None:
         args.name_filter,
         args.num_theorems,
         args.use_vllm,
-        args.ckpt_path,
+        args.gen_ckpt_path,
+        args.ret_ckpt_path,
         args.indexed_corpus_path,
+        args.max_oup_seq_len,
+        args.length_penalty,
         args.tactic,
         args.module,
         args.num_sampled_tactics,
