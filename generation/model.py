@@ -211,7 +211,7 @@ class RetrievalAugmentedGenerator(pl.LightningModule):
             )
 
     def on_validation_epoch_end(self) -> None:
-        if self.eval_num_theorems == 0:
+        if self.eval_num_theorems == 0 or self.logger is None:
             return
 
         from prover.evaluate import evaluate  # Avoid circular import.
@@ -228,7 +228,7 @@ class RetrievalAugmentedGenerator(pl.LightningModule):
                 num_workers=self.eval_num_workers,
                 num_gpus=self.eval_num_gpus,
                 num_theorems=self.eval_num_theorems,
-                ckpt_path=ckpt_path,
+                gen_ckpt_path=ckpt_path,
             )
         else:
             self.retriever.reindex_corpus(self.trainer.datamodule.eval_batch_size)
