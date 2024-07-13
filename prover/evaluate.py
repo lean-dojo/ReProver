@@ -2,6 +2,8 @@
 """
 
 import os
+
+os.environ["RAY_DEDUP_LOGS"] = "0"
 import uuid
 import json
 import pickle
@@ -101,6 +103,7 @@ def evaluate(
     gen_ckpt_path: Optional[str] = None,
     ret_ckpt_path: Optional[str] = None,
     indexed_corpus_path: Optional[str] = None,
+    max_inp_seq_len: int = 2048,
     max_oup_seq_len: int = 512,
     length_penalty: float = 0.0,
     tactic: Optional[str] = None,
@@ -124,6 +127,7 @@ def evaluate(
         gen_ckpt_path,
         ret_ckpt_path,
         indexed_corpus_path,
+        max_inp_seq_len,
         max_oup_seq_len,
         length_penalty,
         tactic,
@@ -204,6 +208,7 @@ def main() -> None:
         type=str,
         help="Path to a pickled indexed corpus. Not required for models w/o retrieval.",
     )
+    parser.add_argument("--max-inp-seq-len", type=int, default=2048)
     parser.add_argument("--max-oup-seq-len", type=int, default=512)
     parser.add_argument("--length-penalty", type=float, default=0.0)
     parser.add_argument("--tactic", type=str, help="The tactic to evaluate.")
@@ -250,6 +255,7 @@ def main() -> None:
         args.gen_ckpt_path,
         args.ret_ckpt_path,
         args.indexed_corpus_path,
+        args.max_inp_seq_len,
         args.max_oup_seq_len,
         args.length_penalty,
         args.tactic,

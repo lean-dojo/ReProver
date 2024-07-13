@@ -338,6 +338,7 @@ class PremiseRetriever(pl.LightningModule):
 
         self.predict_step_outputs.clear()
 
+    @torch.no_grad()
     def retrieve(
         self,
         state: str,

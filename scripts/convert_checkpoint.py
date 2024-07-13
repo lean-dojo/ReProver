@@ -7,7 +7,6 @@ from retrieval.model import PremiseRetriever
 
 
 def convert(model_type: str, src: str, dst: str) -> None:
-    logger.info(f"Loading the model from {src}")
     device = torch.device("cpu")
     if model_type == "generator":
         model = RetrievalAugmentedGenerator.load(src, device, freeze=True)
@@ -17,7 +16,7 @@ def convert(model_type: str, src: str, dst: str) -> None:
         model = PremiseRetriever.load(src, device, freeze=True)
         model.encoder.save_pretrained(dst)
     model.tokenizer.save_pretrained(dst)
-    logger.info(f"The model saved in Hugging Face format to {dst}")
+    
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -27,7 +26,9 @@ def main() -> None:
     args = parser.parse_args()
     logger.info(args)
 
+    logger.info(f"Loading the model from {args.src}")
     convert(args.model_type, args.src, args.dst)
+    logger.info(f"The model saved in Hugging Face format to {args.dst}")
 
 
 if __name__ == "__main__":

@@ -274,8 +274,8 @@ The training script saves hyperparameters, model checkpoints, and other informat
 
 After the models are trained, run the following commands to retrieve premises for all proof states in the dataset.
 ```bash
-python retrieval/main.py predict --config retrieval/confs/cli_lean4_random.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
-python retrieval/main.py predict --config retrieval/confs/cli_lean4_novel_premises.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
+python retrieval/main.py predict --config retrieval/confs/cli_lean4_random.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT 
+python retrieval/main.py predict --config retrieval/confs/cli_lean4_novel_premises.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --trainer.logger.name XXX --trainer.logger.save_dir logs/XXX
 ```
 Retrieved premises are saved to `./lightning_logs/EXP_ID'/predictions.pickle`.
 

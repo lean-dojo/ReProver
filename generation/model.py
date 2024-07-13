@@ -216,40 +216,45 @@ class RetrievalAugmentedGenerator(pl.LightningModule):
 
         from prover.evaluate import evaluate  # Avoid circular import.
 
-        ckpt_path = f"{self.trainer.log_dir}/last-tmp.ckpt"
-        self.trainer.save_checkpoint(ckpt_path)
-        logger.info(f"Saved checkpoint to {ckpt_path}. Evaluating...")
-        torch.cuda.empty_cache()
+        gen_ckpt_path = f"{self.trainer.log_dir}/last-generator"
+        ret_ckpt_path = f"{self.trainer.log_dir}/last-retriever"
+        indexed_corpus_path = f"{self.trainer.log_dir}/last-indexed-corpus.pickle"
+        self.generator.save_pretrained(gen_ckpt_path)
+        self.tokenizer.save_pretrained(gen_ckpt_path)
 
-        data_path = self.trainer.datamodule.data_path
-        if self.retriever is None:
-            acc = evaluate(
-                data_path=data_path,
-                num_workers=self.eval_num_workers,
-                num_gpus=self.eval_num_gpus,
-                num_theorems=self.eval_num_theorems,
-                gen_ckpt_path=ckpt_path,
-            )
-        else:
+        if self.retriever is not None:
+            self.retriever.encoder.save_pretrained(ret_ckpt_path)
+            self.retriever.tokenizer.save_pretrained(ret_ckpt_path)
             self.retriever.reindex_corpus(self.trainer.datamodule.eval_batch_size)
-            corpus_path = f"{self.trainer.log_dir}/checkpoints/indexed_corpus.pickle"
             pickle.dump(
                 IndexedCorpus(
                     self.retriever.corpus, self.retriever.corpus_embeddings.cpu()
                 ),
-                open(corpus_path, "wb"),
+                open(indexed_corpus_path, "wb"),
             )
+            torch.cuda.empty_cache()
             acc = evaluate(
-                data_path=data_path,
+                data_path=self.trainer.datamodule.data_path,
                 num_workers=self.eval_num_workers,
                 num_gpus=self.eval_num_gpus,
                 num_theorems=self.eval_num_theorems,
-                ckpt_path=ckpt_path,
-                indexed_corpus_path=corpus_path,
+                gen_ckpt_path=gen_ckpt_path,
+                ret_ckpt_path=ret_ckpt_path,
+                indexed_corpus_path=indexed_corpus_path,
+            )
+        else:
+            torch.cuda.empty_cache()
+            acc = evaluate(
+                data_path=self.trainer.datamodule.data_path,
+                num_workers=self.eval_num_workers,
+                num_gpus=self.eval_num_gpus,
+                num_theorems=self.eval_num_theorems,
+                gen_ckpt_path=gen_ckpt_path,
             )
 
         self.log("Pass@1_val", acc, on_step=False, on_epoch=True, sync_dist=True)
         logger.info(f"Pass@1: {acc}")
 
-        if os.path.exists(ckpt_path):
-            shutil.rmtree(ckpt_path)
+        for path in [gen_ckpt_path, ret_ckpt_path, indexed_corpus_path]:
+            if os.path.exists(path):
+                shutil.rmtree(path)

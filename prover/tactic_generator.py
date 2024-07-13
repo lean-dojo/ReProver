@@ -1,3 +1,4 @@
+import ray
 import openai
 from lean_dojo import Pos
 from loguru import logger
@@ -11,6 +12,10 @@ from common import remove_marks, zip_strict, format_augmented_state
 
 class TacticGenerator(ABC):
     """A tactic generator takes a state and generates multiple tactic candidates."""
+
+    @abstractmethod
+    def initialize(self) -> None:
+        raise NotImplementedError
 
     @abstractmethod
     async def generate(
@@ -42,6 +47,9 @@ class GPT4TacticGenerator(TacticGenerator):
         self.max_tokens = max_tokens
         self.num_retries = num_retries
         self.threshold = threshold
+
+    def initialize(self) -> None:
+        pass
 
     async def generate(
         self,
@@ -144,6 +152,9 @@ class FixedTacticGenerator(TacticGenerator):
         self.tactic = tactic
         self.module = module
 
+    def initialize(self) -> None:
+        pass
+
     async def generate(
         self,
         state: str,
@@ -160,22 +171,27 @@ class HuggingFaceGenerator(TacticGenerator):
         self,
         model_path: str,
         device,
+        max_inp_seq_len: int,
         max_oup_seq_len: int,
         length_penalty: float,
         template: str = "%s",
     ):
-        try:
-            self.generator = AutoModelForSeq2SeqLM.from_pretrained(model_path)
-            self.decoder_only = False
-        except ValueError:
-            self.generator = AutoModelForCausalLM.from_pretrained(model_path)
-            self.decoder_only = True
-        self.generator = self.generator.to(device).eval()
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        self.model_path = model_path
         self.device = device
+        self.max_inp_seq_len = max_inp_seq_len
         self.max_oup_seq_len = max_oup_seq_len
         self.length_penalty = length_penalty
         self.template = template
+
+    def initialize(self) -> None:
+        try:
+            self.generator = AutoModelForSeq2SeqLM.from_pretrained(self.model_path)
+            self.decoder_only = False
+        except ValueError:
+            self.generator = AutoModelForCausalLM.from_pretrained(self.model_path)
+            self.decoder_only = True
+        self.generator = self.generator.to(self.device).eval()
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
 
     async def generate(
         self,
@@ -187,7 +203,9 @@ class HuggingFaceGenerator(TacticGenerator):
     ) -> List[Tuple[str, float]]:
         state = self.template % state
         logger.debug(state)
-        tokenized_state = self.tokenizer(state, return_tensors="pt")
+        tokenized_state = self.tokenizer(
+            state, max_length=self.max_inp_seq_len, truncation=True, return_tensors="pt"
+        )
         state_ids = tokenized_state.input_ids.to(self.device)
         state_mask = tokenized_state.attention_mask.to(self.device)
 
@@ -233,16 +251,27 @@ class RetrievalAugmentedGenerator(TacticGenerator):
         ret_path: str,
         indexed_corpus_path: str,
         device,
+        max_inp_seq_len: int,
         max_oup_seq_len: int,
         length_penalty: float,
         max_num_retrieved: int,
     ) -> None:
-        self.hf_gen = HuggingFaceGenerator(
-            gen_path, device, max_oup_seq_len, length_penalty
-        )
-        self.retriever = PremiseRetriever.load_hf(ret_path, device)
-        self.retriever.load_corpus(indexed_corpus_path)
+        self.gen_path = gen_path
+        self.ret_path = ret_path
+        self.indexed_corpus_path = indexed_corpus_path
+        self.device = device
+        self.max_inp_seq_len = max_inp_seq_len
+        self.max_oup_seq_len = max_oup_seq_len
+        self.length_penalty = length_penalty
         self.max_num_retrieved = max_num_retrieved
+        self.hf_gen = HuggingFaceGenerator(
+            gen_path, device, max_inp_seq_len, max_oup_seq_len, length_penalty
+        )
+
+    def initialize(self) -> None:
+        self.hf_gen.initialize()
+        self.retriever = PremiseRetriever.load_hf(self.ret_path, self.device)
+        self.retriever.load_corpus(self.indexed_corpus_path)
 
     async def generate(
         self,
@@ -259,7 +288,9 @@ class RetrievalAugmentedGenerator(TacticGenerator):
             theorem_pos,
             self.max_num_retrieved,
         )
-        aug_state = format_augmented_state(state, retrieved_premises)
+        aug_state = format_augmented_state(
+            state, retrieved_premises, self.max_inp_seq_len
+        )
         return await self.hf_gen.generate(
             aug_state, file_path, theorem_full_name, theorem_pos, num_samples
         )
@@ -269,6 +300,9 @@ class VllmGenerator(TacticGenerator):
     def __init__(self, vllm_actor, template: str = "[GOAL]\n%s\n[PROOFSTEP]\n") -> None:
         self.vllm_actor = vllm_actor
         self.template = template
+
+    def initialize(self) -> None:
+        pass
 
     async def generate(
         self,

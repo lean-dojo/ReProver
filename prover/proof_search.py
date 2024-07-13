@@ -309,6 +309,7 @@ class ProverActor:
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
+        tac_gen.initialize()
         self.prover = BestFirstSearchProver(
             tac_gen,
             timeout,
@@ -370,6 +371,7 @@ class DistributedProver:
         gen_ckpt_path: Optional[str],
         ret_ckpt_path: Optional[str],
         indexed_corpus_path: Optional[str],
+        max_inp_seq_len: int,
         max_oup_seq_len: int,
         length_penalty: float,
         tactic: Optional[str],
@@ -399,6 +401,7 @@ class DistributedProver:
                 ret_ckpt_path,
                 indexed_corpus_path,
                 device,
+                max_inp_seq_len,
                 max_oup_seq_len,
                 length_penalty,
                 max_num_retrieved=100,
@@ -406,7 +409,7 @@ class DistributedProver:
         else:
             device = torch.device("cuda") if num_gpus > 0 else torch.device("cpu")
             tac_gen = HuggingFaceGenerator(
-                gen_ckpt_path, device, max_oup_seq_len, length_penalty
+                gen_ckpt_path, device, max_inp_seq_len, max_oup_seq_len, length_penalty
             )
 
         self.distributed = num_workers > 1
