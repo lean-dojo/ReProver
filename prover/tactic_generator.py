@@ -270,7 +270,9 @@ class RetrievalAugmentedGenerator(TacticGenerator):
 
     def initialize(self) -> None:
         self.hf_gen.initialize()
-        self.retriever = PremiseRetriever.load_hf(self.ret_path, self.device)
+        self.retriever = PremiseRetriever.load_hf(
+            self.ret_path, self.max_inp_seq_len, self.device
+        )
         self.retriever.load_corpus(self.indexed_corpus_path)
 
     async def generate(
