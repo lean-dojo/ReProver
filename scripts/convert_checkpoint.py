@@ -16,7 +16,7 @@ def convert(model_type: str, src: str, dst: str) -> None:
         model = PremiseRetriever.load(src, device, freeze=True)
         model.encoder.save_pretrained(dst)
     model.tokenizer.save_pretrained(dst)
-    
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
