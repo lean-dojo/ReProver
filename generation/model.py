@@ -257,4 +257,7 @@ class RetrievalAugmentedGenerator(pl.LightningModule):
 
         for path in [gen_ckpt_path, ret_ckpt_path, indexed_corpus_path]:
             if os.path.exists(path):
-                shutil.rmtree(path)
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
