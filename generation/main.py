@@ -4,8 +4,8 @@ import os
 from loguru import logger
 from pytorch_lightning.cli import LightningCLI
 
-from generator.datamodule import GeneratorDataModule
-from generator.model import RetrievalAugmentedGenerator
+from generation.datamodule import GeneratorDataModule
+from generation.model import RetrievalAugmentedGenerator
 
 
 class CLI(LightningCLI):

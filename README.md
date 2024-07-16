@@ -234,15 +234,18 @@ Check out [Lean Copilot](https://github.com/lean-dojo/LeanCopilot) if you want t
 1. Download and install [Miniconda Python 3](https://docs.conda.io/en/latest/miniconda.html) (Anaconda should also work).
 2. Create the conda environment and install Python dependencies:
 ```bash
-conda create --yes --name ReProver python=3.10 ipython numpy
+conda create --yes --name ReProver python=3.11 ipython
 conda activate ReProver
-pip install torch --index-url https://download.pytorch.org/whl/cu121  # Depending on your CUDA version; see https://pytorch.org/.
-pip install tqdm loguru deepspeed "pytorch-lightning[extra]" transformers tensorboard openai rank_bm25 lean-dojo
+pip install torch  # Depending on your CUDA version; see https://pytorch.org/.
+pip install tqdm loguru deepspeed "pytorch-lightning[extra]" transformers wandb openai rank_bm25 lean-dojo vllm
+pip install git+https://github.com/pytorch/torchtune
 ```
 3. Prepend the repo's root to the `PYTHONPATH` environment variable.
 4. Make sure `wget` and `tar` are available. Then, run `python scripts/download_data.py` to download [LeanDojo Benchmark 4](https://zenodo.org/doi/10.5281/zenodo.8040109). They will be saved to `./data`.
 5. Satisfy the requirements of [LeanDojo](https://github.com/lean-dojo/LeanDojo#requirements).
 6. Use [LeanDojo](https://github.com/lean-dojo/LeanDojo) to trace all repos in the datasets: `python scripts/trace_repos.py`. This step may take some time. Please refer to [LeanDojo's documentation](https://leandojo.readthedocs.io/en/latest/) if you encounter any issues.
+7. Run `wandb login` to log in Weights & Biases.
+
 
 
 ## Premise Selection
@@ -256,28 +259,29 @@ The config files for our experiments are in [./retrieval/confs](./retrieval/conf
 
 Run `python retrieval/main.py fit --help` to see how to use the training script. For example:
 ```bash
-python retrieval/main.py fit --config retrieval/confs/cli_lean4_random.yaml          # Train the retriever on the `random` split of LeanDojo Benchmark 4.
-python retrieval/main.py fit --config retrieval/confs/cli_lean4_novel_premises.yaml  # Train the retriever on the `novel_premises` split of LeanDojo Benchmark 4.
+mkdir logs  # Create the directory for training logs.
+python retrieval/main.py fit --config retrieval/confs/cli_lean4_random.yaml --trainer.logger.name train_retriever_random --trainer.logger.save_dir logs/train_retriever_random         # Train the retriever on the `random` split of LeanDojo Benchmark 4.
+python retrieval/main.py fit --config retrieval/confs/cli_lean4_novel_premises.yaml --trainer.logger.name train_retriever_novel_premises --trainer.logger.save_dir logs/train_retriever_novel_premises  # Train the retriever on the `novel_premises` split of LeanDojo Benchmark 4.
 ```
-The training script saves hyperparameters, model checkpoints, and other information to `./lightning_logs/EXP_ID/`, where `EXP_ID` is an arbitrary experiment ID that will be printed by the training script.
+Hyperparameters and model checkpoints are saved in `./logs/train_retriever_*`, and you can monitor the training process on Weights & Biases.
 
 
 ### Retrieving Premises for All Proof States
 
 After the models are trained, run the following commands to retrieve premises for all proof states in the dataset.
 ```bash
-python retrieval/main.py predict --config retrieval/confs/cli_lean4_random.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
-python retrieval/main.py predict --config retrieval/confs/cli_lean4_novel_premises.yaml --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT
+python retrieval/main.py predict --config retrieval/confs/cli_lean4_random.yaml --ckpt_path $PATH_TO_RETRIEVER_CHECKPOINT --trainer.logger.name predict_retriever_random --trainer.logger.save_dir logs/predict_retriever_random 
+python retrieval/main.py predict --config retrieval/confs/cli_lean4_novel_premises.yaml --ckpt_path $PATH_TO_RETRIEVER_CHECKPOINT --trainer.logger.name predict_retriever_novel_premises --trainer.logger.save_dir logs/predict_retriever_novel_premises
 ```
-Retrieved premises are saved to `./lightning_logs/EXP_ID'/predictions.pickle`.
+, where `PATH_TO_RETRIEVER_CHECKPOINT` is the model checkpoint produced in the previous step. Retrieved premises are saved to `./logs/predict_retriever_*/predictions.pickle`.
 
 
 ### Evaluating the Retrieved Premises
 
 After predictions are saved, evaluate them using metrics such as R@1, R@10, and MRR.
 ```bash
-python retrieval/evaluate.py --data-path data/leandojo_benchmark_4/random --preds-file PATH_TO_PREDICTIONS_PICKLE
-python retrieval/evaluate.py --data-path data/leandojo_benchmark_4/novel_premises --preds-file PATH_TO_PREDICTIONS_PICKLE
+python retrieval/evaluate.py --data-path data/leandojo_benchmark_4/random --preds-file logs/predict_retriever_random/predictions.pickle
+python retrieval/evaluate.py --data-path data/leandojo_benchmark_4/novel_premises --preds-file logs/predict_retriever_novel_premises/predictions.pickle
 ```
 
 
@@ -286,40 +290,51 @@ python retrieval/evaluate.py --data-path data/leandojo_benchmark_4/novel_premise
 
 ### Training the Tactic Generator
 
-Similar to premise selection, you can run `python generator/main.py --help` and  `python generator/main.py fit --help` to check the command line options.
+Similar to premise selection, you can run `python generation/main.py --help` and  `python generation/main.py fit --help` to check the command line options.
 
 To train tactic generators without retrieval:
 ```bash
-python generator/main.py fit --config generator/confs/cli_lean4_random.yaml             # LeanDojo Benchmark 4, `random` split
-python generator/main.py fit --config generator/confs/cli_lean4_novel_premises.yaml     # LeanDojo Benchmark 4, `novel_premises` split
+python generation/main.py fit --config generation/confs/cli_lean4_random.yaml --trainer.logger.name train_generator_random --trainer.logger.save_dir logs/train_generator_random            # LeanDojo Benchmark 4, `random` split
+python generation/main.py fit --config generation/confs/cli_lean4_novel_premises.yaml --trainer.logger.name train_generator_novel_premises --trainer.logger.save_dir logs/train_generator_novel_premises    # LeanDojo Benchmark 4, `novel_premises` split
 ```
+Hyperparameters and model checkpoints are saved in `./logs/train_generator_*`, and you can monitor the training process on Weights & Biases.
 
 To train models augmented by retrieval, we need to provide a retriever checkpoint and its predictions on all proof states in the dataset:
 ```bash 
-python generator/main.py fit --config generator/confs/cli_lean4_random.yaml --model.ret_ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --data.preds_path PATH_TO_PREDICTIONS_PICKLE
-python generator/main.py fit --config generator/confs/cli_lean4_novel_premises.yaml --model.ret_ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --data.preds_path PATH_TO_PREDICTIONS_PICKLE
+python generation/main.py fit --config generation/confs/cli_lean4_random.yaml --model.ret_ckpt_path $PATH_TO_RETRIEVER_CHECKPOINT --data.preds_path logs/predict_retriever_random/predictions.pickle --trainer.logger.name train_reprover_random --trainer.logger.save_dir logs/train_reprover_random
+python generation/main.py fit --config generation/confs/cli_lean4_novel_premises.yaml --model.ret_ckpt_path $PATH_TO_RETRIEVER_CHECKPOINT --data.preds_path logs/predict_retriever_novel_premises/predictions.pickle --trainer.logger.name train_reprover_novel_premises --trainer.logger.save_dir logs/train_reprover_novel_premises
 ```
+
 
 ### Theorem Proving Evaluation on LeanDojo Benchmark
 
 After the tactic generator is trained, we combine it with best-first search to prove theorems by interacting with Lean.
 
-For models without retrieval, run:
+The evaluation script takes Hugging Face model checkpoints (either local or remote) as input. For remote models, you can simply use their names, e.g., [kaiyuy/leandojo-lean4-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean4-tacgen-byt5-small). For locally trained models, you first need to convert them from PyTorch Ligthning checkpoints to Hugging Face checkpoints:
 ```bash
-python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/ --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-workers 5 --num-gpus 1
-python prover/evaluate.py --data-path data/leandojo_benchmark_4/novel_premises/ --ckpt_path PATH_TO_MODEL_CHECKPOINT --split test --num-workers 5 --num-gpus 1
+python scripts/convert_checkpoint.py generator --src $PATH_TO_GENERATOR_CHECKPOINT --dst ./leandojo-lean4-tacgen-byt5-small
+python scripts/convert_checkpoint.py retriever --src $PATH_TO_RETRIEVER_CHECKPOINT --dst ./leandojo-lean4-retriever-byt5-small
 ```
+, where `PATH_TO_GENERATOR_CHECKPOINT` and `PATH_TO_RETRIEVER_CHECKPOINT` are PyTorch Ligthning checkpoints produced by the training script.
 
-For models with retrieval, first use the retriever to index the corpus (pre-computing the embeddings of all premises):
+
+To evaluate the model without retrieval, run (using the `random` data split as example):
 ```bash
-python retrieval/index.py --ckpt_path PATH_TO_RETRIEVER_CHECKPOINT --corpus-path data/leandojo_benchmark_4/corpus.jsonl --output-path PATH_TO_INDEXED_CORPUS
-# Do it separately for two data splits.
+python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/ --gen_ckpt_path ./leandojo-lean4-tacgen-byt5-small --split test --num-workers 5 --num-gpus 1
 ```
+You may tweak `--num-workers` and `--num-gpus` to fit your hardware.
+
+
+For the model with retrieval, first use the retriever to index the corpus (pre-computing the embeddings of all premises):
+```bash
+python retrieval/index.py --ckpt_path ./leandojo-lean4-retriever-byt5-small --corpus-path data/leandojo_benchmark_4/corpus.jsonl --output-path $PATH_TO_INDEXED_CORPUS
+```
+It saves the indexed corpurs as a pickle file to `PATH_TO_INDEXED_CORPUS`.
 
 Then, run:
 ```bash
-python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/  --ckpt_path PATH_TO_REPROVER_CHECKPOINT --indexed-corpus-path PATH_TO_INDEXED_CORPUS --split test --num-cpus 8 --with-gpus
-# Do it separately for two data splits.
+python scripts/convert_checkpoint.py generator --src $PATH_TO_REPROVER_CHECKPOINT --dst ./leandojo-lean4-retriever-tacgen-byt5-small
+python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/  --gen_ckpt_path ./leandojo-lean4-retriever-tacgen-byt5-small --ret_ckpt_path ./leandojo-lean4-retriever-byt5-small --indexed-corpus-path $PATH_TO_INDEXED_CORPUS --split test --num-workers 5 --num-gpus 1
 ```
 
 

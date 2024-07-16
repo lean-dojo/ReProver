@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pytorch_lightning.utilities.deepspeed import (
     convert_zero_checkpoint_to_fp32_state_dict,
 )
-from transformers import get_cosine_schedule_with_warmup
+from transformers import get_constant_schedule_with_warmup
 from deepspeed.ops.adam import FusedAdam, DeepSpeedCPUAdam
 from typing import Optional, List, Dict, Any, Tuple, Generator
 from pytorch_lightning.strategies.deepspeed import DeepSpeedStrategy
@@ -354,48 +354,14 @@ def get_all_pos_premises(annot_tac, corpus: Corpus) -> List[Premise]:
     return list(all_pos_premises)
 
 
-_SPACES_REGEX = re.compile(r"\s+", re.DOTALL)
-
-
-def normalize_spaces(s: str) -> str:
-    """Repalce any consecutive block of whitespace characters in ``s`` with a single whitespace."""
-    return _SPACES_REGEX.sub(" ", s).strip()
-
-
-def format_tactic(annot_tac: str, provenances, normalize: bool) -> str:
-    """Use full names for the all <a>...</a>."""
-    if normalize:
-        annot_tac = normalize_spaces(annot_tac)
-    if len(provenances) == 0:
-        return annot_tac
-
-    tac = ""
-    marks = list(re.finditer(r"<a>(?P<ident>.+?)</a>", annot_tac))
-
-    for i, (m, prov) in enumerate(zip_strict(marks, provenances)):
-        last_end = marks[i - 1].end() if i > 0 else 0
-        tac += annot_tac[last_end : m.start()] + "<a>" + prov["full_name"] + "</a>"
-
-    tac += annot_tac[marks[-1].end() :]
-    return tac
-
-
-def format_state(s: str) -> str:
-    m = re.match(r"\d+ goals", s)
-    if m is not None:
-        return s[m.end() :].strip()
-    else:
-        return s
-
-
 def format_augmented_state(
-    s: str, premises: List[Premise], max_len: int, p_drop: float
+    s: str, premises: List[Premise], max_len: Optional[int] = None, p_drop: float = 0.0
 ) -> str:
     """Format a state with retrieved premises and drop some of them with probability ``p_drop``."""
-    s = format_state(s)
-
     aug_s = ""
     length = 0
+    if max_len is None:
+        max_len = 9999999999999999999999
     max_premises_len = max_len - len(bytes(s.encode("utf-8")))
 
     for p in premises:
@@ -429,22 +395,7 @@ def get_optimizers(
         logger.info("Optimizing with AdamW")
         optimizer = torch.optim.AdamW(parameters, lr=lr)
 
-    if trainer.max_steps != -1:
-        max_steps = trainer.max_steps
-    else:
-        assert trainer.max_epochs is not None
-        max_steps = (
-            trainer.max_epochs
-            * len(trainer.datamodule.train_dataloader())
-            // trainer.accumulate_grad_batches
-        )
-
-    scheduler = get_cosine_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=warmup_steps,
-        num_training_steps=max_steps,
-    )
-
+    scheduler = get_constant_schedule_with_warmup(optimizer, warmup_steps)
     return {
         "optimizer": optimizer,
         "lr_scheduler": {
@@ -462,14 +413,13 @@ def _is_deepspeed_checkpoint(path: str):
 
 def load_checkpoint(model_cls, ckpt_path: str, device, freeze: bool):
     """Handle DeepSpeed checkpoints in model loading."""
-    if not _is_deepspeed_checkpoint(ckpt_path):
-        model = model_cls.load_from_checkpoint(ckpt_path, strict=False).to(device)
-    else:
+    if _is_deepspeed_checkpoint(ckpt_path):
         with tempfile.TemporaryDirectory() as dirname:
             path = os.path.join(dirname, "lightning.cpkt")
             convert_zero_checkpoint_to_fp32_state_dict(ckpt_path, path)
-            model = model_cls.load_from_checkpoint(path, strict=False)
-            model = model.to(device)
+            model = model_cls.load_from_checkpoint(path, strict=False).to(device)
+    else:  # PyTorch Ligthning checkpoints
+        model = model_cls.load_from_checkpoint(ckpt_path, strict=False).to(device)
     if freeze:
         model.freeze()
     return model

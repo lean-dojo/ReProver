@@ -9,6 +9,11 @@ trainer:
       stage: 2
       offload_optimizer: false
       cpu_checkpointing: false
+  logger:
+    class_path: pytorch_lightning.loggers.WandbLogger
+    init_args:
+      name: null
+      save_dir: null
   gradient_clip_val: 1.0
   max_steps: 800000
   callbacks:

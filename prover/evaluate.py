@@ -2,6 +2,8 @@
 """
 
 import os
+
+os.environ["RAY_DEDUP_LOGS"] = "0"
 import uuid
 import json
 import pickle
@@ -97,14 +99,20 @@ def evaluate(
     full_name: Optional[str] = None,
     name_filter: Optional[str] = None,
     num_theorems: Optional[int] = None,
-    ckpt_path: Optional[str] = None,
+    use_vllm: bool = False,
+    gen_ckpt_path: Optional[str] = None,
+    ret_ckpt_path: Optional[str] = None,
     indexed_corpus_path: Optional[str] = None,
+    max_inp_seq_len: int = 2048,
+    max_oup_seq_len: int = 512,
+    length_penalty: float = 0.0,
     tactic: Optional[str] = None,
     module: Optional[str] = None,
     num_sampled_tactics: int = 64,
     timeout: int = 600,
     num_workers: int = 1,
     num_gpus: int = 0,
+    save_results: bool = False,
     verbose: bool = False,
 ) -> float:
     set_logger(verbose)
@@ -115,8 +123,13 @@ def evaluate(
 
     # Search for proofs using multiple concurrent provers.
     prover = DistributedProver(
-        ckpt_path,
+        use_vllm,
+        gen_ckpt_path,
+        ret_ckpt_path,
         indexed_corpus_path,
+        max_inp_seq_len,
+        max_oup_seq_len,
+        length_penalty,
         tactic,
         module,
         num_workers,
@@ -149,9 +162,10 @@ def evaluate(
     # Save the results.
     if exp_id is None:
         exp_id = str(uuid.uuid4())
-    pickle_path = f"{exp_id}_results.pickle"
-    pickle.dump(results, open(pickle_path, "wb"))
-    logger.info(f"Results saved to {pickle_path}")
+    if save_results:
+        pickle_path = f"{exp_id}_results.pickle"
+        pickle.dump(results, open(pickle_path, "wb"))
+        logger.info(f"Results saved to {pickle_path}")
 
     return pass_1
 
@@ -178,16 +192,25 @@ def main() -> None:
     parser.add_argument("--full-name", type=str)
     parser.add_argument("--name-filter", type=str)
     parser.add_argument("--num-theorems", type=int)
+    parser.add_argument("--use-vllm", action="store_true")
     parser.add_argument(
-        "--ckpt_path",
+        "--gen_ckpt_path",
         type=str,
         help="Checkpoint of the tactic generator.",
+    )
+    parser.add_argument(
+        "--ret_ckpt_path",
+        type=str,
+        help="Checkpoint of the premise retriever.",
     )
     parser.add_argument(
         "--indexed-corpus-path",
         type=str,
         help="Path to a pickled indexed corpus. Not required for models w/o retrieval.",
     )
+    parser.add_argument("--max-inp-seq-len", type=int, default=2048)
+    parser.add_argument("--max-oup-seq-len", type=int, default=512)
+    parser.add_argument("--length-penalty", type=float, default=0.0)
     parser.add_argument("--tactic", type=str, help="The tactic to evaluate.")
     parser.add_argument("--module", type=str, help="The module to import the tactic.")
     parser.add_argument(
@@ -208,12 +231,13 @@ def main() -> None:
     parser.add_argument(
         "--num-gpus", type=int, default=0, help="The number of GPUs for proof search."
     )
+    parser.add_argument("--save-results", action="store_true")
     parser.add_argument(
         "--verbose", action="store_true", help="Set the logging level to DEBUG."
     )
     args = parser.parse_args()
 
-    assert args.ckpt_path or args.tactic
+    assert args.gen_ckpt_path or args.tactic
     assert args.num_gpus <= args.num_workers
 
     logger.info(f"PID: {os.getpid()}")
@@ -227,14 +251,20 @@ def main() -> None:
         args.full_name,
         args.name_filter,
         args.num_theorems,
-        args.ckpt_path,
+        args.use_vllm,
+        args.gen_ckpt_path,
+        args.ret_ckpt_path,
         args.indexed_corpus_path,
+        args.max_inp_seq_len,
+        args.max_oup_seq_len,
+        args.length_penalty,
         args.tactic,
         args.module,
         args.num_sampled_tactics,
         args.timeout,
         args.num_workers,
         args.num_gpus,
+        args.save_results,
         args.verbose,
     )
 
