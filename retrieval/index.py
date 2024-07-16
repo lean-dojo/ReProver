@@ -35,7 +35,7 @@ def main() -> None:
     model.reindex_corpus(batch_size=args.batch_size)
 
     pickle.dump(
-        IndexedCorpus(model.corpus, model.corpus_embeddings.cpu()),
+        IndexedCorpus(model.corpus, model.corpus_embeddings.to(torch.float32).cpu()),
         open(args.output_path, "wb"),
     )
     logger.info(f"Indexed corpus saved to {args.output_path}")

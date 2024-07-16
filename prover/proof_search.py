@@ -65,6 +65,7 @@ class BestFirstSearchProver:
         debug: bool,
     ) -> None:
         self.tac_gen = tac_gen
+        self.tac_gen.initialize()
         self.timeout = timeout
         self.num_sampled_tactics = num_sampled_tactics
         self.debug = debug
@@ -309,7 +310,6 @@ class ProverActor:
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
-        tac_gen.initialize()
         self.prover = BestFirstSearchProver(
             tac_gen,
             timeout,

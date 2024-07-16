@@ -310,22 +310,31 @@ python generation/main.py fit --config generation/confs/cli_lean4_novel_premises
 
 After the tactic generator is trained, we combine it with best-first search to prove theorems by interacting with Lean.
 
-For models without retrieval, run:
+The evaluation script takes Hugging Face model checkpoints (either local or remote) as input. For remote models, you can simply use their names, e.g., [kaiyuy/leandojo-lean4-tacgen-byt5-small](https://huggingface.co/kaiyuy/leandojo-lean4-tacgen-byt5-small). For locally trained models, you first need to convert them from PyTorch Ligthning checkpoints to Hugging Face checkpoints:
 ```bash
-python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/ --ckpt_path $PATH_TO_MODEL_CHECKPOINT --split test --num-workers 5 --num-gpus 1
-python prover/evaluate.py --data-path data/leandojo_benchmark_4/novel_premises/ --ckpt_path $PATH_TO_MODEL_CHECKPOINT --split test --num-workers 5 --num-gpus 1
+python scripts/convert_checkpoint.py generator --src $PATH_TO_GENERATOR_CHECKPOINT --dst ./leandojo-lean4-tacgen-byt5-small
+python scripts/convert_checkpoint.py retriever --src $PATH_TO_RETRIEVER_CHECKPOINT --dst ./leandojo-lean4-retriever-byt5-small
 ```
+, where `PATH_TO_GENERATOR_CHECKPOINT` and `PATH_TO_RETRIEVER_CHECKPOINT` are PyTorch Ligthning checkpoints produced by the training script.
 
-For models with retrieval, first use the retriever to index the corpus (pre-computing the embeddings of all premises):
+
+To evaluate the model without retrieval, run (using the `random` data split as example):
 ```bash
-python retrieval/index.py --ckpt_path $PATH_TO_RETRIEVER_CHECKPOINT --corpus-path data/leandojo_benchmark_4/corpus.jsonl --output-path $PATH_TO_INDEXED_CORPUS
-# Do it separately for two data splits.
+python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/ --gen_ckpt_path ./leandojo-lean4-tacgen-byt5-small --split test --num-workers 5 --num-gpus 1
 ```
+You may tweak `--num-workers` and `--num-gpus` to fit your hardware.
+
+
+For the model with retrieval, first use the retriever to index the corpus (pre-computing the embeddings of all premises):
+```bash
+python retrieval/index.py --ckpt_path ./leandojo-lean4-retriever-byt5-small --corpus-path data/leandojo_benchmark_4/corpus.jsonl --output-path $PATH_TO_INDEXED_CORPUS
+```
+It saves the indexed corpurs as a pickle file to `PATH_TO_INDEXED_CORPUS`.
 
 Then, run:
 ```bash
-python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/  --ckpt_path $PATH_TO_REPROVER_CHECKPOINT --indexed-corpus-path $PATH_TO_INDEXED_CORPUS --split test --num-cpus 8 --with-gpus
-# Do it separately for two data splits.
+python scripts/convert_checkpoint.py generator --src $PATH_TO_REPROVER_CHECKPOINT --dst ./leandojo-lean4-retriever-tacgen-byt5-small
+python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/  --gen_ckpt_path ./leandojo-lean4-retriever-tacgen-byt5-small --ret_ckpt_path ./leandojo-lean4-retriever-byt5-small --indexed-corpus-path $PATH_TO_INDEXED_CORPUS --split test --num-workers 5 --num-gpus 1
 ```
 
 
