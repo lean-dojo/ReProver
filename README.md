@@ -81,12 +81,12 @@ for tac in tactic_candidates:
 
 The expected output is shown below. `<a>` and `</a>` are markers of premises in generated tactics. You should remove them when using the tactics.
 ```lean
-rw [<a>Nat.gcd_comm</a>]
+rw [gcd_comm, gcd_rec n n]
 
-rw [<a>Nat.gcd_comm</a>]
-rw [<a>Nat.gcd_comm</a>, <a>Nat.gcd_1</a>]
-rw [<a>Nat.gcd_comm</a>, <a>Nat.gcd_rec</a>]
-rw [<a>Nat.gcd_comm</a>, <a>Nat.gcd_gcd_self_left_right</a>]
+simp [gcd]
+apply Nat.dvd_antisymm
+induction' n with n n_ih
+induction' n with n hn
 ```
 
 
@@ -213,12 +213,12 @@ n : ℕ
 ⊢ gcd n n = n
 
 ------ OUTPUT ------
-cases n
+rw [gcd_def, ← gcd_def, ← gcd_def, ← gcd_def]
 
-cases n
-induction' n with n ih
-induction' n with n IH
-cases' n with n
+simp [gcd]
+rw [gcd]
+rw [gcd_def]
+rw [← Nat.mod_self n, ← Nat.mod_self n]
 ```
 
 **The rest of this document describes our system for training and evaluating LLM-based provers.**
