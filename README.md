@@ -311,6 +311,7 @@ After the tactic generator is trained, we combine it with best-first search to p
 ```bash
 python scripts/convert_checkpoint.py generator --src $PATH_TO_GENERATOR_CHECKPOINT --dst ./leandojo-lean4-tacgen-byt5-small
 python scripts/convert_checkpoint.py retriever --src $PATH_TO_RETRIEVER_CHECKPOINT --dst ./leandojo-lean4-retriever-byt5-small
+python scripts/convert_checkpoint.py generator --src $PATH_TO_REPROVER_CHECKPOINT --dst ./leandojo-lean4-retriever-tacgen-byt5-small
 ```
 , where `PATH_TO_GENERATOR_CHECKPOINT` and `PATH_TO_RETRIEVER_CHECKPOINT` are PyTorch Ligthning checkpoints produced by the training script.
 
@@ -326,11 +327,10 @@ For the model with retrieval, first use the retriever to index the corpus (pre-c
 ```bash
 python retrieval/index.py --ckpt_path ./leandojo-lean4-retriever-byt5-small --corpus-path data/leandojo_benchmark_4/corpus.jsonl --output-path $PATH_TO_INDEXED_CORPUS
 ```
-It saves the indexed corpurs as a pickle file to `PATH_TO_INDEXED_CORPUS`.
+It saves the indexed corpus as a pickle file to `PATH_TO_INDEXED_CORPUS`.
 
 Then, run:
 ```bash
-python scripts/convert_checkpoint.py generator --src $PATH_TO_REPROVER_CHECKPOINT --dst ./leandojo-lean4-retriever-tacgen-byt5-small
 python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/  --gen_ckpt_path ./leandojo-lean4-retriever-tacgen-byt5-small --ret_ckpt_path ./leandojo-lean4-retriever-byt5-small --indexed-corpus-path $PATH_TO_INDEXED_CORPUS --split test --num-workers 5 --num-gpus 1
 ```
 
