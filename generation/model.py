@@ -21,6 +21,7 @@ from retrieval.model import PremiseRetriever
 
 torch.set_float32_matmul_precision("medium")
 
+counter = 0
 
 class TopkAccuracy(Metric):
     is_differentiable: Optional[bool] = False
@@ -84,7 +85,7 @@ class RetrievalAugmentedGenerator(pl.LightningModule):
             )
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.generator = T5ForConditionalGeneration.from_pretrained(model_name)
+        self.generator = T5ForConditionalGeneration.from_pretrained(model_name, device_map = "balanced")
 
         self.topk_accuracies = dict()
         for k in range(1, num_beams + 1):
@@ -115,20 +116,23 @@ class RetrievalAugmentedGenerator(pl.LightningModule):
     ############
 
     def training_step(self, batch, batch_idx: int):
+        global counter
         loss = self(
             batch["state_ids"],
             batch["state_mask"],
             batch["tactic_ids"],
         )
-        self.log(
-            "loss_train",
-            loss,
-            on_step=True,
-            on_epoch=True,
-            sync_dist=True,
-            batch_size=len(batch),
-        )
-        self._log_io_texts("train", batch["state_ids"], batch["tactic_ids"])
+        counter = counter + 1
+        if counter % 1000 == 0:
+            self.log(
+                "loss_train",
+                loss,
+                on_step=True,
+                on_epoch=True,
+                sync_dist=True,
+                batch_size=len(batch),
+            )
+            self._log_io_texts("train", batch["state_ids"], batch["tactic_ids"])
         return loss
 
     def configure_optimizers(self) -> Dict[str, Any]:
