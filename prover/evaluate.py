@@ -110,6 +110,7 @@ def evaluate(
     module: Optional[str] = None,
     num_sampled_tactics: int = 64,
     timeout: int = 600,
+    max_expansions: Optional[int] = None,
     num_workers: int = 1,
     num_gpus: int = 0,
     save_results: bool = False,
@@ -135,6 +136,7 @@ def evaluate(
         num_workers,
         num_gpus=num_gpus,
         timeout=timeout,
+        max_expansions=max_expansions,
         num_sampled_tactics=num_sampled_tactics,
         debug=verbose,
     )
@@ -226,6 +228,12 @@ def main() -> None:
         help="Maximum number of seconds the proof search can take.",
     )
     parser.add_argument(
+        "--max-expansions",
+        type=int,
+        default=None,
+        help="Maximum number of expansions during proof search.",
+    )
+    parser.add_argument(
         "--num-workers", type=int, default=1, help="The number of concurrent provers."
     )
     parser.add_argument(
@@ -262,6 +270,7 @@ def main() -> None:
         args.module,
         args.num_sampled_tactics,
         args.timeout,
+        args.max_expansions,
         args.num_workers,
         args.num_gpus,
         args.save_results,

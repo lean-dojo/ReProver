@@ -61,12 +61,14 @@ class BestFirstSearchProver:
         self,
         tac_gen,  # A given tactic generator.
         timeout: int,
+        max_expansions: Optional[int],
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
         self.tac_gen = tac_gen
         self.tac_gen.initialize()
         self.timeout = timeout
+        self.max_expansions = max_expansions
         self.num_sampled_tactics = num_sampled_tactics
         self.debug = debug
 
@@ -149,11 +151,14 @@ class BestFirstSearchProver:
                 assert time.time() - time_start >= self.timeout
 
             self.total_time = time.time() - time_start
-            if self.total_time > self.timeout:
+            if self.total_time > self.timeout or (
+                self.max_expansions is not None
+                and self.num_expansions > self.max_expansions
+            ):
                 if self.root.status == Status.PROVED:
-                    logger.info("Found a proof but timed out.")
+                    logger.info("Found a proof!")
                 self.root.status = Status.OPEN
-                logger.info("Search timed out.")
+                logger.info("Hit the resource limit (timeout or max_expansions).")
                 break
 
             if self.root.status == Status.FAILED:
@@ -307,12 +312,14 @@ class ProverActor:
         self,
         tac_gen: TacticGenerator,
         timeout: int,
+        max_expansions: Optional[int],
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
         self.prover = BestFirstSearchProver(
             tac_gen,
             timeout,
+            max_expansions,
             num_sampled_tactics,
             debug,
         )
@@ -349,6 +356,7 @@ class VllmActor:
             length_penalty=0,
             use_beam_search=True,
             early_stopping=False,
+            logprobs=0,
         )
 
         async for oup in self.engine.generate(
@@ -379,6 +387,7 @@ class DistributedProver:
         num_workers: int,
         num_gpus: int,
         timeout: int,
+        max_expansions: Optional[int],
         num_sampled_tactics: int,
         debug: Optional[bool] = False,
     ) -> None:
@@ -416,7 +425,7 @@ class DistributedProver:
         if not self.distributed:
             assert num_gpus <= 1
             self.prover = BestFirstSearchProver(
-                tac_gen, timeout, num_sampled_tactics, debug
+                tac_gen, timeout, max_expansions, num_sampled_tactics, debug
             )
             return
 
@@ -431,6 +440,7 @@ class DistributedProver:
                 ProverActor.options(num_gpus=num_gpus_per_worker).remote(
                     tac_gen,
                     timeout=timeout,
+                    max_expansions=max_expansions,
                     num_sampled_tactics=num_sampled_tactics,
                     debug=debug,
                 )
@@ -442,6 +452,7 @@ class DistributedProver:
                 ProverActor.remote(
                     tac_gen,
                     timeout=timeout,
+                    max_expansions=max_expansions,
                     num_sampled_tactics=num_sampled_tactics,
                     debug=debug,
                 )
