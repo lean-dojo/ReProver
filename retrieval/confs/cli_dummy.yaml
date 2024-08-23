@@ -1,0 +1,30 @@
+seed_everything: 3407  # https://arxiv.org/abs/2109.08203
+trainer:
+  accelerator: gpu
+  devices: 1
+  precision: bf16-mixed
+  strategy:
+    class_path: pytorch_lightning.strategies.DeepSpeedStrategy
+    init_args:
+      stage: 2
+      offload_optimizer: false
+      cpu_checkpointing: false
+  gradient_clip_val: 1.0
+  max_steps: 1
+  logger: null
+
+model:
+  model_name: google/byt5-small
+  lr: 0
+  warmup_steps: 2000
+  num_retrieved: 100
+
+data:
+  data_path: data/leandojo_benchmark_4/random/
+  corpus_path: data/leandojo_benchmark_4/corpus.jsonl
+  num_negatives: 3
+  num_in_file_negatives: 1
+  batch_size: 8
+  eval_batch_size: 64
+  max_seq_len: 1024
+  num_workers: 4

@@ -344,8 +344,9 @@ class VllmActor:
         engine_args = AsyncEngineArgs(
             model=self.model_path,
             tensor_parallel_size=self.num_gpus,
-            max_num_batched_tokens=2048,
-            enable_chunked_prefill=True,
+            max_num_batched_tokens=8192,
+            # max_num_batched_tokens=2048,
+            # enable_chunked_prefill=True,
         )
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
 

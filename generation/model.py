@@ -157,7 +157,6 @@ class RetrievalAugmentedGenerator(pl.LightningModule):
     def on_fit_start(self) -> None:
         if self.logger is not None:
             self.logger.log_hyperparams(self.hparams)
-            self.logger.watch(self.generator)
             assert self.trainer is not None
             logger.info(f"Logging to {self.trainer.log_dir}")
 

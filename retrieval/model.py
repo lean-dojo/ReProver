@@ -9,7 +9,7 @@ from lean_dojo import Pos
 from loguru import logger
 import pytorch_lightning as pl
 import torch.nn.functional as F
-from typing import List, Dict, Any, Tuple, Union, Optional
+from typing import List, Dict, Any, Tuple, Union
 from transformers import AutoModelForTextEncoding, AutoTokenizer
 
 from common import (
@@ -146,7 +146,6 @@ class PremiseRetriever(pl.LightningModule):
     def on_fit_start(self) -> None:
         if self.logger is not None:
             self.logger.log_hyperparams(self.hparams)
-            self.logger.watch(self.encoder)
             logger.info(f"Logging to {self.trainer.log_dir}")
 
         self.corpus = self.trainer.datamodule.corpus

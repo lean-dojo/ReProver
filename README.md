@@ -272,7 +272,7 @@ After the models are trained, run the following commands to retrieve premises fo
 python retrieval/main.py predict --config retrieval/confs/cli_lean4_random.yaml --ckpt_path $PATH_TO_RETRIEVER_CHECKPOINT --trainer.logger.name predict_retriever_random --trainer.logger.save_dir logs/predict_retriever_random 
 python retrieval/main.py predict --config retrieval/confs/cli_lean4_novel_premises.yaml --ckpt_path $PATH_TO_RETRIEVER_CHECKPOINT --trainer.logger.name predict_retriever_novel_premises --trainer.logger.save_dir logs/predict_retriever_novel_premises
 ```
-, where `PATH_TO_RETRIEVER_CHECKPOINT` is the model checkpoint produced in the previous step. Retrieved premises are saved to `./logs/predict_retriever_*/predictions.pickle`.
+Retrieved premises are saved to `./logs/predict_retriever_*/predictions.pickle`. Note that `PATH_TO_RETRIEVER_CHECKPOINT` is the DeepSpeed model checkpoint produced in the previous step. If you want to use a Hugging Face checkpoint instead, a workaround would be to run the training for 1 step with zero learning rate.
 
 
 ### Evaluating the Retrieved Premises
