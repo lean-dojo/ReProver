@@ -308,6 +308,7 @@ class VllmGenerator(TacticGenerator):
 
     async def generate(
         self,
+        req_id: str,
         state: str,
         file_path: str,
         theorem_full_name: str,
@@ -316,8 +317,11 @@ class VllmGenerator(TacticGenerator):
     ) -> List[Tuple[str, float]]:
         # prompt = f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n[GOAL]\n{state}\n[PROOFSTEP]\n<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
         prompt = self.template % state
-        response = await self.vllm_actor.generate.remote(prompt, num_samples)
+        response = await self.vllm_actor.generate.remote(req_id, prompt, num_samples)
         return [
             (remove_marks(x.text).strip(), x.cumulative_logprob)
             for x in response.outputs
         ]
+
+    async def cancel(self, req_id: str) -> None:
+        await self.vllm_actor.cancel.remote(req_id)

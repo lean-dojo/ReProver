@@ -81,17 +81,11 @@ class InternalNode(Node):
         default_factory=list, init=False, compare=False, repr=False
     )
 
-    # All edges out of this node that we've considered, or None for unexplored nodes.
-    # When a node is explored, this list is populated, and must not change after that.
-    _out_edges: Optional[List["Edge"]] = field(
-        default=None, init=False, compare=False, repr=False
+    out_edges: List["Edge"] = field(
+        default_factory=list, init=False, compare=False, repr=False
     )
 
-    # A node is proved if any child is proved, and failed if every child is failed
-    # (or there are no children). A node that is proved or failed cannot change status
-    # because nothing is ever added to out_edges. _status is recomputed on an as-needed
-    # basis by children, since proving or failing a child may prove or fail this node.
-    _status: Status = field(default=Status.OPEN, init=False, compare=False, repr=True)
+    status: Status = field(default=Status.OPEN, init=False, compare=False, repr=True)
 
     is_terminal = False  # type: ignore[override]
 
@@ -101,18 +95,10 @@ class InternalNode(Node):
         default=math.inf, init=False, compare=False, repr=False
     )
 
-    @property
-    def out_edges(self):
-        return self._out_edges
-
-    # This setter implements exploring this node
-    @out_edges.setter
-    def out_edges(self, out_edges: Iterable["Edge"]) -> Optional[List["Edge"]]:
-        if self.is_explored:
-            raise RuntimeError("Node is already explored.")
-
-        self._out_edges = list(out_edges)
-        self._recompute_status()
+    def add_out_edge(self, e: "Edge", max_num_edges: int) -> None:
+        assert e.src is self and e not in self.out_edges
+        self.out_edges.append(e)
+        self._recompute_status(max_num_edges)
         self._recompute_distance_to_proof()
 
     # A node is considered explored if we've evaluated the actor in the node to generate
@@ -121,36 +107,30 @@ class InternalNode(Node):
     def is_explored(self) -> bool:
         return self.out_edges is not None
 
-    @property
-    def status(self) -> Status:
-        return self._status
-
-    @status.setter
-    def status(self, s):
-        self._status = s
-
-    def _recompute_status(self):
+    def _recompute_status(self, max_num_edges: int):
         """
         Recursively update the status of the current node and its ancestors.
         """
         assert self.is_explored and self.out_edges is not None
 
         # If this node is proved or failed, nothing can change that
-        if self._status != Status.OPEN:
+        if self.status != Status.OPEN:
             return
 
         # If any child is proved, this node is proved, and so are parents recursively
         if any(edge.dst.status == Status.PROVED for edge in self.out_edges):
-            self._status = Status.PROVED
+            self.status = Status.PROVED
 
         # If all children failed, this node is failed. This may fail some parents too.
-        if all(edge.dst.status == Status.FAILED for edge in self.out_edges):
-            self._status = Status.FAILED
+        if len(self.out_edges) == max_num_edges and all(
+            edge.dst.status == Status.FAILED for edge in self.out_edges
+        ):
+            self.status = Status.FAILED
 
         # If this node was proved or failed, parents may need to recompute.
         # This is guaranteed to terminate because only open nodes can change, and
         # there are a finite number of open nodes in the tree.
-        if self._status != Status.OPEN:
+        if self.status != Status.OPEN:
             for edge in self.in_edges:
                 edge.src._recompute_status()
 
@@ -203,48 +183,6 @@ class InternalNode(Node):
             child_proof = proving_edge.dst.extract_proof()
             assert child_proof
             return [proving_edge, *child_proof]
-
-    #########
-    # Debug #
-    #########
-
-    def check_invariants(self):
-        """
-        Perform some sanity checks.
-        """
-        if not self.is_explored:
-            assert self.status == Status.OPEN
-            return  # Nothing more can be said about unexplored nodes
-
-        for edge in self.in_edges:
-            assert edge.dst is self
-
-        if self.out_edges == []:
-            assert self.status == Status.FAILED
-        else:
-            for edge in self.out_edges:  # type: ignore
-                assert edge.src is self
-
-        if self.status == Status.PROVED:
-            assert self.out_edges
-            assert any(edge.dst.status == Status.PROVED for edge in self.out_edges)
-            assert all(edge.dst.status == Status.PROVED for edge in self.in_edges)
-
-            proof_by_steps = self.extract_proof()
-            assert proof_by_steps is not None
-            assert self.distance_to_proof == len(proof_by_steps)
-
-        elif self.status == Status.FAILED:
-            assert self.out_edges is not None
-            assert all(edge.dst.status == Status.FAILED for edge in self.out_edges)
-            assert self.distance_to_proof == math.inf
-            assert self.extract_proof() == None
-        elif self.status == Status.OPEN:
-            assert self.out_edges
-            assert not any(edge.dst.status == Status.PROVED for edge in self.out_edges)
-            assert not all(edge.dst.status == Status.FAILED for edge in self.out_edges)
-            assert self.distance_to_proof == math.inf
-            assert self.extract_proof() == None
 
 
 @dataclass
