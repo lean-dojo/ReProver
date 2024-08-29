@@ -314,7 +314,6 @@ class VllmGenerator(TacticGenerator):
         theorem_pos: Pos,
         num_samples: int,
     ) -> List[Tuple[str, float]]:
-        # prompt = f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n[GOAL]\n{state}\n[PROOFSTEP]\n<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
         prompt = self.template % state
         response = await self.vllm_actor.generate.remote(prompt, num_samples)
         return [
